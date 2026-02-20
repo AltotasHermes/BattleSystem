@@ -33,6 +33,7 @@ class Skill:
     name            — отображаемое имя
     tier            — ступень цепочки (1/2/3); пассивы = 0
     chain_id        — идентификатор цепочки
+    branch_name     — человекочитаемое название ветви для UI
     resource_cost   — стоимость в ресурсе персонажа
     action_weight   — вес для CTB
     target_type     — тип цели
@@ -44,6 +45,7 @@ class Skill:
     name:           str
     tier:           int
     chain_id:       str
+    branch_name:    str
     resource_cost:  float
     action_weight:  float
     target_type:    str
@@ -116,6 +118,25 @@ class SkillSet:
             return []
         return [s for s in self.all_active()
                 if self.cooldowns.is_ready(s)]
+
+    def branches(self):
+        """
+        Возвращает список (branch_name, branch_name) доступных ветвей.
+        Одна запись на уникальное branch_name.
+        """
+        seen = {}
+        for s in self._skills.values():
+            if not s.is_passive and s.branch_name not in seen:
+                seen[s.branch_name] = s.branch_name
+        return list(seen.items())
+
+    def available_in_branch(self, branch_name, owner=None):
+        from combat.status import skills_blocked
+        if owner is not None and skills_blocked(owner):
+            return []
+        return [s for s in self.all_active()
+                if s.branch_name == branch_name
+                and self.cooldowns.is_ready(s)]
 
     def use(self, skill_id: str, user, targets, ctx=None) -> bool:
         """

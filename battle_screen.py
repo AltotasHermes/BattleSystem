@@ -31,9 +31,10 @@ define COL_QUEUE    = "#1a1a2a"
 
 screen battle_screen(ctx):
 
-    default submenu    = None
-    default pick_mode  = None   ## None / "enemy" / "ally"
-    default pick_action = None  ## ("attack"|"skill", payload) — ожидает цель
+    default submenu     = None
+    default skill_branch = None
+    default pick_mode   = None   ## None / "enemy" / "ally"
+    default pick_action = None   ## ("attack"|"skill", payload) — ожидает цель
 
     add Solid(COL_BG)
 
@@ -62,12 +63,12 @@ screen battle_screen(ctx):
                     color q_col
 
     ## -----------------------------------------------------------------------
-    ## ЗОНА ВРАГОВ — x:0..1700, y:0..740
+    ## ЗОНА ВРАГОВ — x:0..1560, y:0..740
     ## -----------------------------------------------------------------------
     frame:
         xpos 0
         ypos 0
-        xsize 1700
+        xsize 1560
         ysize 740
         background Solid("#00000000")
 
@@ -87,8 +88,6 @@ screen battle_screen(ctx):
                     spacing 8
                     xalign 0.5
 
-                    ## Заглушка спрайта — кликабельна в режиме выбора цели
-                    ## Return возвращает (action, skill_id_or_None, target_name)
                     if e_selectable:
                         button:
                             xsize 180
@@ -114,7 +113,6 @@ screen battle_screen(ctx):
                                 yalign 0.5
                                 color e_col
 
-                    ## Индикатор выбора
                     if e_selectable:
                         text "[[выбрать]]" size 13 xalign 0.5 color COL_ACTIVE
                     else:
@@ -157,6 +155,7 @@ screen battle_screen(ctx):
                     background Solid(COL_BTN)
                     hover_background Solid(COL_BTN_HVR)
                     action [SetScreenVariable("submenu", None),
+                            SetScreenVariable("skill_branch", None),
                             SetScreenVariable("pick_mode", "enemy"),
                             SetScreenVariable("pick_action", ("attack", None))]
                     text_size 17
@@ -169,6 +168,7 @@ screen battle_screen(ctx):
                     background Solid(COL_BTN)
                     hover_background Solid(COL_BTN_HVR)
                     action [SetScreenVariable("submenu", None),
+                            SetScreenVariable("skill_branch", None),
                             SetScreenVariable("pick_mode", None),
                             SetScreenVariable("pick_action", None),
                             Return(("guard", None, None))]
@@ -181,7 +181,8 @@ screen battle_screen(ctx):
                     ysize 68
                     background (Solid(COL_BTN_SEL) if submenu == "skills" else Solid(COL_BTN))
                     hover_background Solid(COL_BTN_HVR)
-                    action ToggleScreenVariable("submenu", "skills", None)
+                    action [ToggleScreenVariable("submenu", "skills", None),
+                            SetScreenVariable("skill_branch", None)]
                     text_size 17
                     text_color (COL_ACTIVE if submenu == "skills" else COL_TEXT)
                     text_xalign 0.5
@@ -191,7 +192,8 @@ screen battle_screen(ctx):
                     ysize 68
                     background (Solid(COL_BTN_SEL) if submenu == "items" else Solid(COL_BTN))
                     hover_background Solid(COL_BTN_HVR)
-                    action ToggleScreenVariable("submenu", "items", None)
+                    action [ToggleScreenVariable("submenu", "items", None),
+                            SetScreenVariable("skill_branch", None)]
                     text_size 17
                     text_color (COL_ACTIVE if submenu == "items" else COL_TEXT)
                     text_xalign 0.5
@@ -204,49 +206,12 @@ screen battle_screen(ctx):
                     text "Ожидание..." size 15 color COL_DEAD xalign 0.5 yalign 0.5
 
     ## -----------------------------------------------------------------------
-    ## ПОДМЕНЮ НАВЫКИ — x:200..460, y:740..1080
-    ## -----------------------------------------------------------------------
-    if submenu == "skills" and ctx.current_actor is not None and not ctx.current_actor.is_enemy:
-        frame:
-            xpos 200
-            ypos 740
-            xsize 260
-            ysize 340
-            background Solid(COL_PANEL2)
-
-            vbox:
-                xpos 0
-                ypos 0
-                spacing 0
-
-                if hasattr(ctx.current_actor, "skillset"):
-                    for sk in ctx.current_actor.skillset.available():
-                        $ sk_line = sk.name + "  [" + str(int(sk.resource_cost)) + "]"
-                        $ sk_all  = sk.target_type in ("all_foe", "all_ally")
-                        textbutton sk_line:
-                            xsize 260
-                            ysize 52
-                            background Solid(COL_BTN)
-                            hover_background Solid(COL_BTN_HVR)
-                            action If(sk_all,
-                                true  = [SetScreenVariable("submenu", None),
-                                         SetScreenVariable("pick_mode", None),
-                                         SetScreenVariable("pick_action", None),
-                                         Return(("skill", sk.skill_id, None))],
-                                false = [SetScreenVariable("submenu", None),
-                                         SetScreenVariable("pick_mode", "enemy"),
-                                         SetScreenVariable("pick_action", ("skill", sk.skill_id))])
-                            text_size 14
-                            text_color COL_TEXT
-                            text_xalign 0.1
-
-    ## -----------------------------------------------------------------------
-    ## ПАНЕЛЬ ПАРТИИ — x:200..1700, y:740..1080
+    ## ПАНЕЛЬ ПАРТИИ — x:200..1560, y:740..1080
     ## -----------------------------------------------------------------------
     frame:
         xpos 200
         ypos 740
-        xsize 1500
+        xsize 1360
         ysize 340
         background Solid(COL_PANEL)
 
@@ -297,12 +262,12 @@ screen battle_screen(ctx):
                             text (str(p["resource"]) + " / " + str(p["res_max"])) size 12 color COL_TEXT
 
     ## -----------------------------------------------------------------------
-    ## ПРАВАЯ ПАНЕЛЬ — ЛОГ — x:1700..1920, full height
+    ## ПРАВАЯ ПАНЕЛЬ — ЛОГ — x:1560..1920
     ## -----------------------------------------------------------------------
     frame:
-        xpos 1700
+        xpos 1560
         ypos 0
-        xsize 220
+        xsize 360
         ysize 1080
         background Solid(COL_PANEL)
 
@@ -311,11 +276,77 @@ screen battle_screen(ctx):
             ypos 20
             spacing 6
 
-            text "ЛОГ" size 17 color COL_ACTIVE
-            add Solid(COL_BORDER) xsize 192 ysize 1
+            text "ЛОГ" size 20 color COL_ACTIVE
+            add Solid(COL_BORDER) xsize 332 ysize 1
 
             for line in ctx.recent_log(20):
-                text line size 12 color COL_TEXT
+                text line size 15 color COL_TEXT
+
+    ## -----------------------------------------------------------------------
+    ## ПОДМЕНЮ НАВЫКИ — x:200..420, y:740..1080
+    ## Объявлено последним — рисуется поверх панели партии
+    ## -----------------------------------------------------------------------
+    if submenu == "skills" and ctx.current_actor is not None and not ctx.current_actor.is_enemy:
+        frame:
+            xpos 200
+            ypos 740
+            xsize 220
+            ysize 340
+            background Solid(COL_PANEL2)
+
+            vbox:
+                xpos 0
+                ypos 0
+                spacing 0
+
+                if skill_branch is None:
+                    ## Уровень 1 — список ветвей
+                    if hasattr(ctx.current_actor, "skillset"):
+                        for branch_id, branch_name in ctx.current_actor.skillset.branches():
+                            textbutton branch_name:
+                                xsize 220
+                                ysize 68
+                                background Solid(COL_BTN)
+                                hover_background Solid(COL_BTN_HVR)
+                                action SetScreenVariable("skill_branch", branch_id)
+                                text_size 14
+                                text_color COL_TEXT
+                                text_xalign 0.1
+
+                else:
+                    ## Уровень 2 — скиллы выбранной ветви
+                    textbutton "< Назад":
+                        xsize 220
+                        ysize 40
+                        background Solid(COL_BTN)
+                        hover_background Solid(COL_BTN_HVR)
+                        action SetScreenVariable("skill_branch", None)
+                        text_size 13
+                        text_color COL_ACTIVE
+                        text_xalign 0.1
+
+                    if hasattr(ctx.current_actor, "skillset"):
+                        for sk in ctx.current_actor.skillset.available_in_branch(skill_branch):
+                            $ sk_line = sk.name + "  [" + str(int(sk.resource_cost)) + "]"
+                            $ sk_all  = sk.target_type in ("all_foe", "all_ally")
+                            textbutton sk_line:
+                                xsize 220
+                                ysize 52
+                                background Solid(COL_BTN)
+                                hover_background Solid(COL_BTN_HVR)
+                                action If(sk_all,
+                                    true  = [SetScreenVariable("submenu", None),
+                                             SetScreenVariable("skill_branch", None),
+                                             SetScreenVariable("pick_mode", None),
+                                             SetScreenVariable("pick_action", None),
+                                             Return(("skill", sk.skill_id, None))],
+                                    false = [SetScreenVariable("submenu", None),
+                                             SetScreenVariable("skill_branch", None),
+                                             SetScreenVariable("pick_mode", "enemy"),
+                                             SetScreenVariable("pick_action", ("skill", sk.skill_id))])
+                                text_size 13
+                                text_color COL_TEXT
+                                text_xalign 0.1
 
 
 ## ---------------------------------------------------------------------------

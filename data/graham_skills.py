@@ -13,6 +13,8 @@ from combat.status import (
     has_status, S_STAGGER_BREAK,
 )
 
+BRANCH_CUTTING = "Режущее оружие"
+
 
 # ---------------------------------------------------------------------------
 # Вспомогательная функция применения результата урона
@@ -137,21 +139,21 @@ def build_graham_skills() -> SkillSet:
 
     ss.register(Skill(
         skill_id="bloodletting_1", name="Кровопускание I",
-        tier=1, chain_id="bloodletting",
+        tier=1, chain_id="bloodletting_1", branch_name=BRANCH_CUTTING,
         resource_cost=20, action_weight=ActionWeight.LIGHT,
         target_type=TARGET_SINGLE, execute=_bloodletting_1,
         description="Удар с умеренным шансом наложить Кровотечение.",
     ))
     ss.register(Skill(
         skill_id="bloodletting_2", name="Кровопускание II",
-        tier=2, chain_id="bloodletting",
+        tier=2, chain_id="bloodletting_2", branch_name=BRANCH_CUTTING,
         resource_cost=25, action_weight=ActionWeight.LIGHT,
         target_type=TARGET_SINGLE, execute=_bloodletting_2,
         description="Повышенный шанс. Накладывает Сильное кровотечение.",
     ))
     ss.register(Skill(
         skill_id="bloodletting_3", name="Кровопускание III",
-        tier=3, chain_id="bloodletting",
+        tier=3, chain_id="bloodletting_3", branch_name=BRANCH_CUTTING,
         resource_cost=35, action_weight=ActionWeight.MEDIUM,
         target_type=TARGET_AREA_FOE, execute=_bloodletting_3,
         description="Высокий шанс. Удар по всем врагам в ближней зоне.",
@@ -159,21 +161,21 @@ def build_graham_skills() -> SkillSet:
 
     ss.register(Skill(
         skill_id="cleave_1", name="Рубящий удар I",
-        tier=1, chain_id="cleave",
+        tier=1, chain_id="cleave_1", branch_name=BRANCH_CUTTING,
         resource_cost=40, action_weight=ActionWeight.HEAVY,
         target_type=TARGET_SINGLE, execute=_cleave_1,
         description="Тяжёлый удар с высоким уроном.",
     ))
     ss.register(Skill(
         skill_id="cleave_2", name="Рубящий удар II",
-        tier=2, chain_id="cleave",
+        tier=2, chain_id="cleave_2", branch_name=BRANCH_CUTTING,
         resource_cost=50, action_weight=ActionWeight.HEAVY,
         target_type=TARGET_SINGLE, execute=_cleave_2,
         description="Урон повышен. Бонус по цели с Кровотечением.",
     ))
     ss.register(Skill(
         skill_id="cleave_3", name="Рубящий удар III",
-        tier=3, chain_id="cleave",
+        tier=3, chain_id="cleave_3", branch_name=BRANCH_CUTTING,
         resource_cost=65, action_weight=ActionWeight.HEAVY,
         target_type=TARGET_SINGLE, execute=_cleave_3,
         description="Максимальный урон. Гарантированный Откат при Прорыве стойки.",
@@ -181,21 +183,21 @@ def build_graham_skills() -> SkillSet:
 
     ss.register(Skill(
         skill_id="rush_1", name="Натиск I",
-        tier=1, chain_id="rush",
+        tier=1, chain_id="rush_1", branch_name=BRANCH_CUTTING,
         resource_cost=25, action_weight=ActionWeight.MEDIUM,
         target_type=TARGET_SINGLE, execute=_rush_1,
         description="Удар с движением. Лёгкий Откат.",
     ))
     ss.register(Skill(
         skill_id="rush_2", name="Натиск II",
-        tier=2, chain_id="rush",
+        tier=2, chain_id="rush_2", branch_name=BRANCH_CUTTING,
         resource_cost=35, action_weight=ActionWeight.MEDIUM,
         target_type=TARGET_SINGLE, execute=_rush_2,
         description="Откат усилен. Бонус если цель стояла следующей в очереди.",
     ))
     ss.register(Skill(
         skill_id="rush_3", name="Натиск III",
-        tier=3, chain_id="rush",
+        tier=3, chain_id="rush_3", branch_name=BRANCH_CUTTING,
         resource_cost=45, action_weight=ActionWeight.MEDIUM,
         target_type=TARGET_SINGLE, execute=_rush_3,
         description="Сбивает с ног. Накладывает Оглушение.",
