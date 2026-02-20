@@ -1,0 +1,296 @@
+"""
+Слой 4 — статусные эффекты.
+
+Каждый статус — объект StatusEffect с типом, длительностью и хуками.
+Носитель хранит список активных статусов в combatant.statuses.
+Тик вызывается вручную в начале или конце хода носителя.
+"""
+
+from dataclasses import dataclass, field
+from typing import Callable, Optional, Any
+
+
+# ---------------------------------------------------------------------------
+# Идентификаторы статусов
+# ---------------------------------------------------------------------------
+
+# Периодический урон
+S_BLEED         = "bleed"
+S_BLEED_HEAVY   = "bleed_heavy"
+S_POISON        = "poison"
+S_POISON_HEAVY  = "poison_heavy"
+S_BURN          = "burn"
+
+# Контроль
+S_STUN          = "stun"
+S_SLEEP         = "sleep"
+S_CONFUSION     = "confusion"
+S_TERROR        = "terror"
+S_GRAB          = "grab"
+S_PARALYZE      = "paralyze"
+S_SILENCE       = "silence"
+S_STAGGER_BREAK = "stagger_break"
+
+# Ослабление
+S_BLIND         = "blind"
+S_SLOW          = "slow"
+S_SLOW_LIGHT    = "slow_light"
+S_WEAKNESS      = "weakness"
+S_WEAKNESS_HEAVY = "weakness_heavy"
+S_DISTRACT      = "distract"
+S_DRAIN_MP      = "drain_mp"
+S_DRAIN_ENERGY  = "drain_energy"
+S_VULNERABLE    = "vulnerable"
+S_DEFENSE_BREAK = "defense_break"
+S_TAUNT         = "taunt"
+S_CURSE         = "curse"
+
+# Стихийные состояния
+S_CHILL         = "chill"
+S_FROSTBITE     = "frostbite"
+S_WET           = "wet"
+S_SCORCH        = "scorch"
+
+# Позитивные
+S_REGEN         = "regen"
+S_FOCUS_ATK     = "focus_atk"
+S_FOCUS_ACC     = "focus_acc"
+S_FOCUS_LUCK    = "focus_luck"
+S_HASTE         = "haste"
+S_GUARD_AURA    = "guard_aura"
+S_MAG_BARRIER   = "mag_barrier"
+S_REFLECT       = "reflect"
+S_CC_IMMUNE     = "cc_immune"
+S_STALWART      = "stalwart"
+S_INVINCIBLE    = "invincible"
+S_SPIRIT_REGEN  = "spirit_regen"
+S_BERSERK       = "berserk"
+S_DARK_AURA     = "dark_aura"
+
+# Служебные
+S_PROVOKE       = "provoke"
+S_EDICT         = "edict"
+S_OMEN          = "omen"
+
+
+# ---------------------------------------------------------------------------
+# Категории для быстрых проверок
+# ---------------------------------------------------------------------------
+
+CC_STATUSES = {S_STUN, S_SLEEP, S_CONFUSION, S_TERROR, S_GRAB, S_PARALYZE,
+               S_SILENCE, S_STAGGER_BREAK}
+
+NEGATIVE_STATUSES = {
+    S_BLEED, S_BLEED_HEAVY, S_POISON, S_POISON_HEAVY, S_BURN,
+    S_STUN, S_SLEEP, S_CONFUSION, S_TERROR, S_GRAB, S_PARALYZE, S_SILENCE,
+    S_BLIND, S_SLOW, S_SLOW_LIGHT, S_WEAKNESS, S_WEAKNESS_HEAVY, S_DISTRACT,
+    S_DRAIN_MP, S_DRAIN_ENERGY, S_VULNERABLE, S_DEFENSE_BREAK, S_CURSE,
+    S_CHILL, S_FROSTBITE, S_WET, S_SCORCH, S_STAGGER_BREAK,
+}
+
+
+# ---------------------------------------------------------------------------
+# Класс статуса
+# ---------------------------------------------------------------------------
+
+@dataclass
+class StatusEffect:
+    """
+    status_id   — строковый идентификатор (одна из констант S_*)
+    duration    — оставшиеся ходы носителя; -1 = бесконечный
+    source      — Combatant-источник (для масштабирования урона/силы)
+    power       — числовой параметр эффекта (урон за тик, % снижения и т.д.)
+    on_tick     — callable(owner, effect) вызываемый в начале хода носителя
+    on_apply    — callable(owner, effect) вызываемый при наложении
+    on_remove   — callable(owner, effect) вызываемый при истечении/снятии
+    stacks      — количество стаков (для Кровотечения и подобных)
+    """
+    status_id:  str
+    duration:   int                        # ходы носителя
+    source:     Any               = None
+    power:      float             = 0.0
+    on_tick:    Optional[Callable] = None
+    on_apply:   Optional[Callable] = None
+    on_remove:  Optional[Callable] = None
+    stacks:     int               = 1
+
+    def tick(self, owner):
+        """Вызывается в начале хода носителя. Возвращает True если статус истёк."""
+        if self.on_tick:
+            self.on_tick(owner, self)
+        if self.duration > 0:
+            self.duration -= 1
+            if self.duration == 0:
+                self.remove(owner)
+                return True
+        return False
+
+    def apply(self, owner):
+        if self.on_apply:
+            self.on_apply(owner, self)
+
+    def remove(self, owner):
+        if self.on_remove:
+            self.on_remove(owner, self)
+
+
+# ---------------------------------------------------------------------------
+# Менеджер статусов на Combatant
+# ---------------------------------------------------------------------------
+
+def get_statuses(owner):
+    """Ленивая инициализация списка статусов."""
+    if not hasattr(owner, "statuses"):
+        owner.statuses = []
+    return owner.statuses
+
+
+def has_status(owner, status_id):
+    return any(s.status_id == status_id for s in get_statuses(owner))
+
+
+def get_status(owner, status_id):
+    for s in get_statuses(owner):
+        if s.status_id == status_id:
+            return s
+    return None
+
+
+def apply_status(owner, effect: StatusEffect, resistance_override=None):
+    """
+    Накладывает статус с учётом профиля сопротивлений.
+    resistance_override позволяет передать уже рассчитанный шанс снаружи.
+    Для иммунитета (resist==0) к стихии — статус не накладывается.
+    """
+    # Проверяем иммунитет через профиль сопротивлений носителя
+    if hasattr(owner, "resistances"):
+        # Стихийные статусы блокируются иммунитетом к соответствующей стихии
+        element_map = {
+            S_CHILL: "frost", S_FROSTBITE: "frost",
+            S_BURN: "fire", S_SCORCH: "fire",
+            S_WET: "thunder",
+        }
+        if effect.status_id in element_map:
+            elem = element_map[effect.status_id]
+            if owner.resistances.get(elem, 1.0) == 0.0:
+                return False
+
+    # CC-иммунитет
+    if effect.status_id in CC_STATUSES and has_status(owner, S_CC_IMMUNE):
+        return False
+
+    statuses = get_statuses(owner)
+
+    # Стакующиеся статусы (Кровотечение)
+    stackable = {S_BLEED, S_BLEED_HEAVY, S_POISON, S_POISON_HEAVY}
+    if effect.status_id in stackable:
+        existing = get_status(owner, effect.status_id)
+        if existing:
+            existing.stacks += 1
+            existing.duration = max(existing.duration, effect.duration)
+            return True
+
+    # Обновление длительности для остальных (не суммируется)
+    existing = get_status(owner, effect.status_id)
+    if existing:
+        existing.duration = max(existing.duration, effect.duration)
+        existing.power    = effect.power
+        return True
+
+    statuses.append(effect)
+    effect.apply(owner)
+    return True
+
+
+def remove_status(owner, status_id):
+    statuses = get_statuses(owner)
+    for s in list(statuses):
+        if s.status_id == status_id:
+            s.remove(owner)
+            statuses.remove(s)
+            return True
+    return False
+
+
+def tick_statuses(owner):
+    """
+    Вызывается в начале хода носителя.
+    Возвращает список истёкших статусов.
+    """
+    statuses = get_statuses(owner)
+    expired = []
+    for s in list(statuses):
+        done = s.tick(owner)
+        if done:
+            statuses.remove(s)
+            expired.append(s.status_id)
+    return expired
+
+
+def clear_statuses(owner, negative_only=False):
+    statuses = get_statuses(owner)
+    if negative_only:
+        to_remove = [s for s in statuses if s.status_id in NEGATIVE_STATUSES]
+    else:
+        to_remove = list(statuses)
+    for s in to_remove:
+        s.remove(owner)
+        statuses.remove(s)
+
+
+# ---------------------------------------------------------------------------
+# Фабрики конкретных статусов
+# ---------------------------------------------------------------------------
+
+def _bleed_tick(owner, effect):
+    dmg = max(1, int(effect.power * effect.stacks))
+    owner.take_damage(dmg)
+    effect._tick_log = f"BLEED x{effect.stacks} -{dmg} HP"
+
+def make_bleed(duration=3, power=8.0):
+    return StatusEffect(S_BLEED, duration=duration, power=power, on_tick=_bleed_tick)
+
+def make_bleed_heavy(duration=3, power=14.0):
+    return StatusEffect(S_BLEED_HEAVY, duration=duration, power=power, on_tick=_bleed_tick)
+
+
+def _regen_tick(owner, effect):
+    amt = max(1, int(effect.power))
+    owner.heal(amt)
+    effect._tick_log = f"REGEN +{amt} HP"
+
+def make_regen(duration=3, power=15.0):
+    return StatusEffect(S_REGEN, duration=duration, power=power, on_tick=_regen_tick)
+
+
+def _stun_apply(owner, effect):
+    owner._stunned = True
+
+def _stun_remove(owner, effect):
+    owner._stunned = False
+
+def make_stun(duration=1):
+    return StatusEffect(S_STUN, duration=duration,
+                        on_apply=_stun_apply, on_remove=_stun_remove)
+
+
+def _slow_apply(owner, effect):
+    # Замедление — прямой штраф к ctb_speed; пересчёт скорости через коэффициент
+    owner._slow_mod = getattr(owner, "_slow_mod", 1.0) * 0.6
+    owner.ctb_speed = owner.finesse * 1.5 * owner._slow_mod
+
+def _slow_remove(owner, effect):
+    owner._slow_mod = 1.0
+    owner.ctb_speed = owner.finesse * 1.5
+
+def make_slow(duration=2):
+    return StatusEffect(S_SLOW, duration=duration,
+                        on_apply=_slow_apply, on_remove=_slow_remove)
+
+def make_slow_light(duration=2):
+    # Лёгкое замедление — меньший штраф
+    def apply(owner, effect):
+        owner._slow_mod = getattr(owner, "_slow_mod", 1.0) * 0.8
+        owner.ctb_speed = owner.finesse * 1.5 * owner._slow_mod
+    return StatusEffect(S_SLOW_LIGHT, duration=duration,
+                        on_apply=apply, on_remove=_slow_remove)
