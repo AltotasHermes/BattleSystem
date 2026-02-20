@@ -88,15 +88,20 @@ screen battle_screen(ctx):
                     xalign 0.5
 
                     ## Заглушка спрайта — кликабельна в режиме выбора цели
+                    ## Return возвращает (action, skill_id_or_None, target_name)
                     if e_selectable:
-                        imagebutton:
-                            idle  Frame(Solid(e_frame_bg), 0, 0)
-                            hover Frame(Solid("#3a3a1a"), 0, 0)
+                        button:
                             xsize 180
                             ysize 300
                             xalign 0.5
-                            action Return(("target_selected", pick_action, e["name"]))
-                            add Text(e["name"][0], size=90, color=COL_ACTIVE) xalign 0.5 yalign 0.5
+                            background Solid(e_frame_bg)
+                            hover_background Solid("#3a3a1a")
+                            action Return((pick_action[0], pick_action[1], e["name"]))
+                            text e["name"][0]:
+                                size 90
+                                color COL_ACTIVE
+                                xalign 0.5
+                                yalign 0.5
                     else:
                         frame:
                             xsize 180
@@ -111,7 +116,7 @@ screen battle_screen(ctx):
 
                     ## Индикатор выбора
                     if e_selectable:
-                        text "[ выбрать ]" size 13 xalign 0.5 color COL_ACTIVE
+                        text "[[ выбрать ]]" size 13 xalign 0.5 color COL_ACTIVE
                     else:
                         text e["name"] size 15 xalign 0.5 color e_col
 
@@ -166,7 +171,7 @@ screen battle_screen(ctx):
                     action [SetScreenVariable("submenu", None),
                             SetScreenVariable("pick_mode", None),
                             SetScreenVariable("pick_action", None),
-                            Return(("guard", None))]
+                            Return(("guard", None, None))]
                     text_size 17
                     text_color COL_TEXT
                     text_xalign 0.5
@@ -227,7 +232,7 @@ screen battle_screen(ctx):
                                 true  = [SetScreenVariable("submenu", None),
                                          SetScreenVariable("pick_mode", None),
                                          SetScreenVariable("pick_action", None),
-                                         Return(("skill", sk.skill_id))],
+                                         Return(("skill", sk.skill_id, None))],
                                 false = [SetScreenVariable("submenu", None),
                                          SetScreenVariable("pick_mode", "enemy"),
                                          SetScreenVariable("pick_action", ("skill", sk.skill_id))])
@@ -348,20 +353,21 @@ label battle_loop:
         choice = renpy.call_screen("battle_screen", ctx=ctx)
 
     python:
-        action, payload = choice
+        action, skill_id, target_name = choice
 
         if action == "attack":
-            alive_enemies = ctx.alive_enemies()
-            if alive_enemies:
-                ctx.execute_basic_attack(actor, alive_enemies[0])
+            target = next((e for e in ctx.alive_enemies() if e.name == target_name), None)
+            if target:
+                ctx.execute_basic_attack(actor, target)
             ctx.commit_action(ActionWeight.LIGHT)
 
         elif action == "skill":
-            alive_enemies = ctx.alive_enemies()
-            if alive_enemies and hasattr(actor, "skillset"):
-                sk = actor.skillset.get(payload)
-                if sk:
-                    actor.skillset.use(payload, actor, alive_enemies[:1], ctx)
+            if target_name is not None:
+                targets = [e for e in ctx.alive_enemies() if e.name == target_name]
+            else:
+                targets = ctx.alive_enemies()
+            if targets and hasattr(actor, "skillset"):
+                actor.skillset.use(skill_id, actor, targets, ctx)
             ctx.commit_action(ActionWeight.MEDIUM)
 
         elif action == "guard":
