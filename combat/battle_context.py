@@ -65,7 +65,7 @@ class BattleContext:
     def advance(self):
         """
         Выбирает следующего актора и выполняет начало его хода:
-        убывание stagger, тик статусов, тик кулдаунов.
+        убывание stagger, тик статусов.
         Возвращает актора или None если бой завершён.
         """
         if self.is_over():
@@ -78,21 +78,21 @@ class BattleContext:
 
         self.current_actor = actor
 
-        # Начало хода: stagger убывает, затем тикают статусы и кулдауны
+        # Начало хода: stagger убывает, затем тикают статусы
         decay_stagger(actor)
         tick_statuses(actor)
-
-        if hasattr(actor, "skillset"):
-            actor.skillset.tick_cooldowns()
 
         return actor
 
     def commit_action(self, weight):
         """
         Фиксирует вес совершённого действия и сдвигает актора в очереди.
+        Кулдауны тикают здесь — после действия, один раз за ход актора.
         Вызывается после того как действие полностью разрешено.
         """
         if self.current_actor:
+            if hasattr(self.current_actor, "skillset"):
+                self.current_actor.skillset.tick_cooldowns()
             apply_delay(self.current_actor, weight)
             self._resolve_result()
 

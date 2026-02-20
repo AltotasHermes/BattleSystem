@@ -79,7 +79,8 @@ class CooldownTracker:
 
     def put_on_cooldown(self, skill: Skill):
         if skill.cooldown_length > 0:
-            self._cd[skill.chain_id] = skill.cooldown_length
+            # +1 компенсирует немедленный тик в commit_action того же хода
+            self._cd[skill.chain_id] = skill.cooldown_length + 1
 
     def tick(self):
         for chain_id in list(self._cd):
@@ -193,12 +194,10 @@ class SkillSet:
         if not user.spend_resource(skill.resource_cost):
             return False
 
-        # Имя скилла пишется в лог первым — до эффектов
-        # ВАЖНО: [[ ]] — экранирование для Ren'Py text-виджета
         if ctx is not None:
             cd = skill.cooldown_length
-            cd_note = f" [[КД {cd}]]" if cd > 0 else ""
-            ctx.log.append(f">> {user.name}: {skill.name}{cd_note}")
+            cd_note = " [[КД " + str(cd) + "]]" if cd > 0 else ""
+            ctx.log.append(">> " + user.name + ": " + skill.name + cd_note)
 
         if skill.execute:
             skill.execute(user, targets, ctx)
@@ -216,11 +215,11 @@ class SkillSet:
     def ui_skill_label(self, skill: Skill) -> str:
         """Строка для кнопки навыка в боевом меню."""
         cost  = str(int(skill.resource_cost))
-        cd    = self.cooldowns.remaining(skill.chain_id)
+        cd    = max(0, self.cooldowns.remaining(skill.chain_id) - 1)
         ready = self.cooldowns.is_ready(skill)
         if ready:
-            return f"{skill.name}  [{cost}]"
-        return f"{skill.name}  [КД {cd}]"
+            return skill.name + "  [[" + cost + "]]"
+        return skill.name + "  [[КД " + str(cd) + "]]"
 
     def ui_skill_available(self, skill: Skill) -> bool:
         return self.cooldowns.is_ready(skill) and self.is_branch_unlocked(skill.branch_name)
