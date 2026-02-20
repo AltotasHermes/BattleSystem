@@ -3,7 +3,7 @@
 
 Каждый статус — объект StatusEffect с типом, длительностью и хуками.
 Носитель хранит список активных статусов в combatant.statuses.
-Тик вызывается вручную в начале или конце хода носителя.
+Тик вызывается вручную в начале хода носителя.
 """
 
 from dataclasses import dataclass, field
@@ -88,6 +88,9 @@ NEGATIVE_STATUSES = {
     S_CHILL, S_FROSTBITE, S_WET, S_SCORCH, S_STAGGER_BREAK,
 }
 
+# Статусы, блокирующие использование скиллов
+SKILL_BLOCK_STATUSES = {S_SLOW, S_SILENCE}
+
 
 # ---------------------------------------------------------------------------
 # Класс статуса
@@ -162,9 +165,7 @@ def apply_status(owner, effect: StatusEffect, resistance_override=None):
     resistance_override позволяет передать уже рассчитанный шанс снаружи.
     Для иммунитета (resist==0) к стихии — статус не накладывается.
     """
-    # Проверяем иммунитет через профиль сопротивлений носителя
     if hasattr(owner, "resistances"):
-        # Стихийные статусы блокируются иммунитетом к соответствующей стихии
         element_map = {
             S_CHILL: "frost", S_FROSTBITE: "frost",
             S_BURN: "fire", S_SCORCH: "fire",
@@ -181,7 +182,7 @@ def apply_status(owner, effect: StatusEffect, resistance_override=None):
 
     statuses = get_statuses(owner)
 
-    # Стакующиеся статусы (Кровотечение)
+    # Стакующиеся статусы (Кровотечение, Яд)
     stackable = {S_BLEED, S_BLEED_HEAVY, S_POISON, S_POISON_HEAVY}
     if effect.status_id in stackable:
         existing = get_status(owner, effect.status_id)
@@ -238,8 +239,13 @@ def clear_statuses(owner, negative_only=False):
         statuses.remove(s)
 
 
+def skills_blocked(owner) -> bool:
+    """Возвращает True если текущие статусы запрещают использование скиллов."""
+    return any(has_status(owner, sid) for sid in SKILL_BLOCK_STATUSES)
+
+
 # ---------------------------------------------------------------------------
-# Фабрики конкретных статусов
+# Фабрики — периодический урон
 # ---------------------------------------------------------------------------
 
 def _bleed_tick(owner, effect):
@@ -254,6 +260,53 @@ def make_bleed_heavy(duration=3, power=14.0):
     return StatusEffect(S_BLEED_HEAVY, duration=duration, power=power, on_tick=_bleed_tick)
 
 
+def _poison_tick(owner, effect):
+    dmg = max(1, int(effect.power * effect.stacks))
+    owner.take_damage(dmg)
+    effect._tick_log = f"POISON x{effect.stacks} -{dmg} HP"
+
+def make_poison(duration=4, power=6.0):
+    return StatusEffect(S_POISON, duration=duration, power=power, on_tick=_poison_tick)
+
+def make_poison_heavy(duration=4, power=12.0, source=None):
+    """Урон масштабируется с source.sense если source передан."""
+    def tick(owner, effect):
+        base = effect.power
+        if effect.source is not None:
+            base = max(base, effect.source.sense * 0.6)
+        dmg = max(1, int(base * effect.stacks))
+        owner.take_damage(dmg)
+        effect._tick_log = f"POISON_HEAVY x{effect.stacks} -{dmg} HP"
+    return StatusEffect(S_POISON_HEAVY, duration=duration, power=power,
+                        source=source, on_tick=tick)
+
+
+# Горение: DoT + уязвимость к огню + снижение эффективности лечения
+_BURN_HEAL_REDUCTION = 0.4   # лечение снижено на 40%
+
+def _burn_apply(owner, effect):
+    owner._burn_heal_mod = getattr(owner, "_burn_heal_mod", 1.0) * (1.0 - _BURN_HEAL_REDUCTION)
+    # Снимает Озноб при наложении
+    if has_status(owner, S_CHILL):
+        remove_status(owner, S_CHILL)
+
+def _burn_remove(owner, effect):
+    owner._burn_heal_mod = 1.0
+
+def _burn_tick(owner, effect):
+    dmg = max(1, int(effect.power))
+    owner.take_damage(dmg)
+    effect._tick_log = f"BURN -{dmg} HP"
+
+def make_burn(duration=3, power=5.0):
+    return StatusEffect(S_BURN, duration=duration, power=power,
+                        on_apply=_burn_apply, on_remove=_burn_remove, on_tick=_burn_tick)
+
+
+# ---------------------------------------------------------------------------
+# Фабрики — регенерация
+# ---------------------------------------------------------------------------
+
 def _regen_tick(owner, effect):
     amt = max(1, int(effect.power))
     owner.heal(amt)
@@ -263,19 +316,100 @@ def make_regen(duration=3, power=15.0):
     return StatusEffect(S_REGEN, duration=duration, power=power, on_tick=_regen_tick)
 
 
+def _spirit_regen_tick(owner, effect):
+    amt = max(1, int(effect.power))
+    owner.restore_resource(amt)
+    effect._tick_log = f"SPIRIT_REGEN +{amt} MP"
+
+def make_spirit_regen(duration=3, power=10.0):
+    return StatusEffect(S_SPIRIT_REGEN, duration=duration, power=power,
+                        on_tick=_spirit_regen_tick)
+
+
+# ---------------------------------------------------------------------------
+# Фабрики — контроль
+# ---------------------------------------------------------------------------
+
+# Оглушение:
+#   - флаг _stunned (уклонение обнуляется в damage.py)
+#   - CTB-откат при наложении
+#   - снижение mag_def_stat на 25%
+
+_STUN_MAG_DEF_MULT = 0.75
+
 def _stun_apply(owner, effect):
+    from combat.ctb import push_back
     owner._stunned = True
+    owner._stun_mag_def_saved = owner.mag_def_stat
+    owner.mag_def_stat = owner.mag_def_stat * _STUN_MAG_DEF_MULT
+    push_back(owner, 5.0)   # лёгкий CTB-откат
 
 def _stun_remove(owner, effect):
     owner._stunned = False
+    if hasattr(owner, "_stun_mag_def_saved"):
+        owner.mag_def_stat = owner._stun_mag_def_saved
+        del owner._stun_mag_def_saved
 
 def make_stun(duration=1):
     return StatusEffect(S_STUN, duration=duration,
                         on_apply=_stun_apply, on_remove=_stun_remove)
 
 
+def _sleep_apply(owner, effect):
+    owner._asleep = True
+
+def _sleep_remove(owner, effect):
+    owner._asleep = False
+
+def make_sleep(duration=2):
+    return StatusEffect(S_SLEEP, duration=duration,
+                        on_apply=_sleep_apply, on_remove=_sleep_remove)
+
+
+def make_silence(duration=2):
+    """Тишина: блокирует скиллы через SKILL_BLOCK_STATUSES."""
+    return StatusEffect(S_SILENCE, duration=duration)
+
+
+def make_terror(duration=2):
+    """Ужас: снижение уклонения через флаг _terrified, читается в damage.py."""
+    def apply(owner, effect):
+        owner._terrified = True
+    def remove(owner, effect):
+        owner._terrified = False
+    return StatusEffect(S_TERROR, duration=duration,
+                        on_apply=apply, on_remove=remove)
+
+
+# Паралич: частичный CC, защита повышена, нельзя уклоняться/контратаковать
+_PARALYZE_DEF_MULT = 1.3
+
+def _paralyze_apply(owner, effect):
+    from combat.ctb import push_back
+    owner._paralyzed = True
+    owner._paralyze_def_saved = owner.phys_def_stat, owner.mag_def_stat
+    owner.phys_def_stat = owner.phys_def_stat * _PARALYZE_DEF_MULT
+    owner.mag_def_stat  = owner.mag_def_stat  * _PARALYZE_DEF_MULT
+    push_back(owner, 8.0)
+
+def _paralyze_remove(owner, effect):
+    owner._paralyzed = False
+    if hasattr(owner, "_paralyze_def_saved"):
+        owner.phys_def_stat, owner.mag_def_stat = owner._paralyze_def_saved
+        del owner._paralyze_def_saved
+
+def make_paralyze(duration=1):
+    return StatusEffect(S_PARALYZE, duration=duration,
+                        on_apply=_paralyze_apply, on_remove=_paralyze_remove)
+
+
+# ---------------------------------------------------------------------------
+# Фабрики — ослабление
+# ---------------------------------------------------------------------------
+
+# Замедление: снижает ctb_speed + блокирует скиллы (через SKILL_BLOCK_STATUSES)
+
 def _slow_apply(owner, effect):
-    # Замедление — прямой штраф к ctb_speed; пересчёт скорости через коэффициент
     owner._slow_mod = getattr(owner, "_slow_mod", 1.0) * 0.6
     owner.ctb_speed = owner.finesse * 1.5 * owner._slow_mod
 
@@ -287,10 +421,197 @@ def make_slow(duration=2):
     return StatusEffect(S_SLOW, duration=duration,
                         on_apply=_slow_apply, on_remove=_slow_remove)
 
+
 def make_slow_light(duration=2):
-    # Лёгкое замедление — меньший штраф
+    """Замедление шага: только CTB, скиллы не блокируются."""
     def apply(owner, effect):
         owner._slow_mod = getattr(owner, "_slow_mod", 1.0) * 0.8
         owner.ctb_speed = owner.finesse * 1.5 * owner._slow_mod
     return StatusEffect(S_SLOW_LIGHT, duration=duration,
                         on_apply=apply, on_remove=_slow_remove)
+
+
+# Слепота: снижает accuracy_pct и evade_pct
+_BLIND_ACC_MULT  = 0.3   # меткость x0.3 (резкое снижение)
+_BLIND_EVADE_MULT = 0.7  # уклонение x0.7
+
+def _blind_apply(owner, effect):
+    owner._blind_acc_saved   = owner.accuracy_pct
+    owner._blind_evade_saved = owner.evade_pct
+    owner.accuracy_pct = owner.accuracy_pct * _BLIND_ACC_MULT
+    owner.evade_pct    = owner.evade_pct    * _BLIND_EVADE_MULT
+
+def _blind_remove(owner, effect):
+    if hasattr(owner, "_blind_acc_saved"):
+        owner.accuracy_pct = owner._blind_acc_saved
+        owner.evade_pct    = owner._blind_evade_saved
+        del owner._blind_acc_saved, owner._blind_evade_saved
+
+def make_blind(duration=2):
+    return StatusEffect(S_BLIND, duration=duration,
+                        on_apply=_blind_apply, on_remove=_blind_remove)
+
+
+# Рассеянность: умеренное снижение меткости
+_DISTRACT_ACC_MULT = 0.65
+
+def _distract_apply(owner, effect):
+    owner._distract_acc_saved = owner.accuracy_pct
+    owner.accuracy_pct = owner.accuracy_pct * _DISTRACT_ACC_MULT
+
+def _distract_remove(owner, effect):
+    if hasattr(owner, "_distract_acc_saved"):
+        owner.accuracy_pct = owner._distract_acc_saved
+        del owner._distract_acc_saved
+
+def make_distract(duration=2):
+    return StatusEffect(S_DISTRACT, duration=duration,
+                        on_apply=_distract_apply, on_remove=_distract_remove)
+
+
+# Слабость: снижает все боевые параметры
+_WEAKNESS_MULT       = 0.8
+_WEAKNESS_HEAVY_MULT = 0.6
+
+def _make_weakness_factory(status_id, mult):
+    def apply(owner, effect):
+        owner._weakness_saved = (
+            owner.mettle, owner.sense, owner.finesse, owner.glamour,
+            owner.phys_def_stat, owner.mag_def_stat,
+            owner.accuracy_pct, owner.evade_pct,
+        )
+        owner.phys_def_stat = owner.phys_def_stat * mult
+        owner.mag_def_stat  = owner.mag_def_stat  * mult
+        owner.accuracy_pct  = owner.accuracy_pct  * mult
+        owner.evade_pct     = owner.evade_pct      * mult
+        # Снижаем атакующие статы через временные атрибуты, которые читаются при построении AttackData
+        owner._weakness_mult = mult
+
+    def remove(owner, effect):
+        if hasattr(owner, "_weakness_saved"):
+            (owner.mettle, owner.sense, owner.finesse, owner.glamour,
+             owner.phys_def_stat, owner.mag_def_stat,
+             owner.accuracy_pct, owner.evade_pct) = owner._weakness_saved
+            del owner._weakness_saved
+        owner._weakness_mult = 1.0
+
+    return StatusEffect(status_id, duration=0,
+                        on_apply=apply, on_remove=remove)
+
+def make_weakness(duration=3):
+    s = _make_weakness_factory(S_WEAKNESS, _WEAKNESS_MULT)
+    s.duration = duration
+    return s
+
+def make_weakness_heavy(duration=3):
+    s = _make_weakness_factory(S_WEAKNESS_HEAVY, _WEAKNESS_HEAVY_MULT)
+    s.duration = duration
+    return s
+
+
+# Уязвимость: снижает физ или маг защиту
+def make_vulnerable(duration=3, physical=True):
+    def apply(owner, effect):
+        if physical:
+            owner._vuln_phys_saved = owner.phys_def_stat
+            owner.phys_def_stat = owner.phys_def_stat * 0.75
+        else:
+            owner._vuln_mag_saved = owner.mag_def_stat
+            owner.mag_def_stat = owner.mag_def_stat * 0.75
+
+    def remove(owner, effect):
+        if physical and hasattr(owner, "_vuln_phys_saved"):
+            owner.phys_def_stat = owner._vuln_phys_saved
+            del owner._vuln_phys_saved
+        elif not physical and hasattr(owner, "_vuln_mag_saved"):
+            owner.mag_def_stat = owner._vuln_mag_saved
+            del owner._vuln_mag_saved
+
+    return StatusEffect(S_VULNERABLE, duration=duration,
+                        on_apply=apply, on_remove=remove)
+
+
+# Разрушение защиты уже обрабатывается в stagger.py через DEFENSE_BREAK_MULT
+# Фабрика нужна чтобы накладывать статус из скиллов
+def make_defense_break(duration=2):
+    return StatusEffect(S_DEFENSE_BREAK, duration=duration)
+
+
+# Проклятие: снижает luck и crit_chance
+_CURSE_LUCK_MULT = 0.5
+
+def _curse_apply(owner, effect):
+    owner._curse_luck_saved  = owner.luck
+    owner._curse_crit_saved  = owner.crit_chance, owner.crit_mult
+    owner.luck        = max(0, int(owner.luck * _CURSE_LUCK_MULT))
+    owner.crit_chance = owner.crit_chance * 0.5
+    owner.crit_mult   = max(1.0, owner.crit_mult - 0.3)
+
+def _curse_remove(owner, effect):
+    if hasattr(owner, "_curse_luck_saved"):
+        owner.luck       = owner._curse_luck_saved
+        owner.crit_chance, owner.crit_mult = owner._curse_crit_saved
+        del owner._curse_luck_saved, owner._curse_crit_saved
+
+def make_curse(duration=3):
+    return StatusEffect(S_CURSE, duration=duration,
+                        on_apply=_curse_apply, on_remove=_curse_remove)
+
+
+# ---------------------------------------------------------------------------
+# Фабрики — стихийные состояния
+# ---------------------------------------------------------------------------
+
+# Озноб: DoT + лёгкое замедление + уязвимость к морозу
+_CHILL_FROST_VULN = 0.25   # прибавка к коэффициенту мороза
+
+def _chill_apply(owner, effect):
+    from combat.ctb import push_back
+    push_back(owner, 4.0)
+    owner._chill_frost_bonus = _CHILL_FROST_VULN
+    # Снимает Горение при наложении
+    if has_status(owner, S_BURN):
+        remove_status(owner, S_BURN)
+
+def _chill_remove(owner, effect):
+    owner._chill_frost_bonus = 0.0
+
+def _chill_tick(owner, effect):
+    dmg = max(1, int(effect.power))
+    owner.take_damage(dmg)
+
+def make_chill(duration=3, power=3.0):
+    return StatusEffect(S_CHILL, duration=duration, power=power,
+                        on_apply=_chill_apply, on_remove=_chill_remove,
+                        on_tick=_chill_tick)
+
+
+# Промокший: нейтральное состояние, усиливает Грозу и Мороз
+def _wet_apply(owner, effect):
+    owner._wet_active = True
+
+def _wet_remove(owner, effect):
+    owner._wet_active = False
+
+def make_wet(duration=4):
+    return StatusEffect(S_WET, duration=duration,
+                        on_apply=_wet_apply, on_remove=_wet_remove)
+
+
+# Обморожение: тяжёлая версия Озноба — больше DoT, сильнее замедление
+def _frostbite_apply(owner, effect):
+    from combat.ctb import push_back
+    push_back(owner, 10.0)
+    owner._chill_frost_bonus = _CHILL_FROST_VULN * 2
+
+def _frostbite_remove(owner, effect):
+    owner._chill_frost_bonus = 0.0
+
+def _frostbite_tick(owner, effect):
+    dmg = max(1, int(effect.power))
+    owner.take_damage(dmg)
+
+def make_frostbite(duration=3, power=8.0):
+    return StatusEffect(S_FROSTBITE, duration=duration, power=power,
+                        on_apply=_frostbite_apply, on_remove=_frostbite_remove,
+                        on_tick=_frostbite_tick)

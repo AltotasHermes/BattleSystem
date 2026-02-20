@@ -3,7 +3,7 @@
 
 init python:
     import sys, os
-    _base = os.path.join(renpy.config.gamedir)
+    _base = os.path.join(renpy.config.gamedir, "scripts", "new_combat")
     if _base not in sys.path:
         sys.path.insert(0, _base)
 

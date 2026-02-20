@@ -5,13 +5,12 @@
 
 from combat.skills import Skill, SkillSet, TARGET_SINGLE, TARGET_AREA_FOE
 from combat.ctb import ActionWeight
-from combat.damage import resolve_damage, AttackData, DMG_SLASH, DMG_BLUNT
+from combat.damage import resolve_damage, AttackData, DMG_SLASH
 from combat.stagger import add_stagger
 from combat.status import (
     apply_status,
-    make_bleed, make_bleed_heavy,
-    StatusEffect, S_STUN,
-    has_status,
+    make_bleed, make_bleed_heavy, make_stun,
+    has_status, S_STAGGER_BREAK,
 )
 
 
@@ -20,7 +19,6 @@ from combat.status import (
 # ---------------------------------------------------------------------------
 
 def _apply_result(target, result):
-    """Применяет DamageResult к цели."""
     if result.hit and not result.evaded:
         if result.damage > 0:
             target.take_damage(result.damage)
@@ -42,7 +40,7 @@ def _bloodletting_1(user, targets, ctx):
                          weapon_mult=0.9, stagger_fill=0.10)
         res = resolve_damage(user, t, atk)
         _apply_result(t, res)
-        if res.hit and random.random() < 0.40:   # умеренный шанс
+        if res.hit and random.random() < 0.40:
             apply_status(t, make_bleed(duration=3, power=8.0))
 
 def _bloodletting_2(user, targets, ctx):
@@ -52,7 +50,7 @@ def _bloodletting_2(user, targets, ctx):
                          weapon_mult=0.9, stagger_fill=0.10)
         res = resolve_damage(user, t, atk)
         _apply_result(t, res)
-        if res.hit and random.random() < 0.65:   # повышенный шанс
+        if res.hit and random.random() < 0.65:
             apply_status(t, make_bleed_heavy(duration=3, power=14.0))
 
 def _bloodletting_3(user, targets, ctx):
@@ -62,7 +60,7 @@ def _bloodletting_3(user, targets, ctx):
                          weapon_mult=0.9, stagger_fill=0.10)
         res = resolve_damage(user, t, atk)
         _apply_result(t, res)
-        if res.hit and random.random() < 0.85:   # высокий шанс
+        if res.hit and random.random() < 0.85:
             apply_status(t, make_bleed(duration=3, power=8.0))
 
 
@@ -85,13 +83,11 @@ def _cleave_2(user, targets, ctx):
         _apply_result(t, res)
 
 def _cleave_3(user, targets, ctx):
-    from combat.status import S_STAGGER_BREAK
     for t in targets:
         atk = AttackData(DMG_SLASH, scaling_stat=user.mettle,
                          weapon_mult=2.0, stagger_fill=0.40)
         res = resolve_damage(user, t, atk)
         _apply_result(t, res)
-        # Гарантированный Откат если цель в Прорыве стойки
         if res.hit and has_status(t, S_STAGGER_BREAK):
             from combat.ctb import push_back
             push_back(t, 15.0)
@@ -107,7 +103,7 @@ def _rush_1(user, targets, ctx):
         res = resolve_damage(user, t, atk)
         _apply_result(t, res)
         if res.hit:
-            push_back(t, 5.0)   # лёгкий Откат
+            push_back(t, 5.0)
 
 def _rush_2(user, targets, ctx):
     from combat.ctb import push_back
@@ -117,9 +113,7 @@ def _rush_2(user, targets, ctx):
         res = resolve_damage(user, t, atk)
         _apply_result(t, res)
         if res.hit:
-            # Усиленный Откат если цель стояла следующей в очереди
-            bonus = (ctx is not None and
-                     ctx.peek_next() is t)
+            bonus = (ctx is not None and ctx.peek_next() is t)
             push_back(t, 12.0 if bonus else 7.0)
 
 def _rush_3(user, targets, ctx):
@@ -132,11 +126,6 @@ def _rush_3(user, targets, ctx):
         if res.hit:
             push_back(t, 10.0)
             apply_status(t, make_stun(duration=1))
-
-def make_stun(duration=1):
-    return StatusEffect(S_STUN, duration=duration,
-                        on_apply=lambda o, e: setattr(o, "_stunned", True),
-                        on_remove=lambda o, e: setattr(o, "_stunned", False))
 
 
 # ---------------------------------------------------------------------------

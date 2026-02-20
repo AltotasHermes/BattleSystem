@@ -50,8 +50,8 @@ class DamageResult:
     crit:         bool  = False
     damage:       int   = 0
     stagger_fill: float = 0.0
-    evaded:       bool  = False   # True если уклонение сработало
-    log:          list  = field(default_factory=list)  # отладочная цепочка
+    evaded:       bool  = False
+    log:          list  = field(default_factory=list)
 
 
 # --- Вспомогательные функции ---
@@ -62,21 +62,46 @@ def _defense_pct(stat, armor, k=DEFENSE_K):
 
 
 def _raw_damage(scaling_stat, weapon_mult):
+    # Применяем weakness_mult если он есть на атакующем
     spread = random.uniform(0.85, 1.15)
     return (scaling_stat ** 1.4) * weapon_mult * spread
+
+
+def _effective_scaling_stat(attacker, base_stat):
+    """Учитывает Слабость атакующего — снижает атакующий стат."""
+    mult = getattr(attacker, "_weakness_mult", 1.0)
+    return base_stat * mult
 
 
 def _resistance_mult(target, damage_type):
     """
     Возвращает множитель урона из профиля сопротивлений цели.
-    Профиль хранится как dict в target.resistances.
-    Если тип отсутствует — норма (1.0).
-    Специальное значение 'absorb' обрабатывается отдельно.
+    Озноб и Обморожение добавляют бонус к коэффициенту мороза.
+    Промокший добавляет бонус к Грозе и Морозу.
     """
     if not hasattr(target, "resistances"):
-        return 1.0
-    val = target.resistances.get(damage_type, 1.0)
-    return val  # 'absorb' проверяется в resolve_damage
+        base = 1.0
+    else:
+        val = target.resistances.get(damage_type, 1.0)
+        if val == "absorb":
+            return "absorb"
+        if val == 0.0:
+            return 0.0
+        base = val
+
+    # Погодные и статусные бонусы к стихийным коэффициентам
+    bonus = 0.0
+    if damage_type == DMG_FROST:
+        bonus += getattr(target, "_chill_frost_bonus", 0.0)
+    if getattr(target, "_wet_active", False):
+        if damage_type == DMG_FROST:
+            bonus += 0.25
+        elif damage_type == DMG_THUNDER:
+            bonus += 0.25
+        elif damage_type == DMG_FIRE:
+            bonus -= 0.25
+
+    return base + bonus
 
 
 # --- Основная функция ---
@@ -85,7 +110,14 @@ def resolve_damage(attacker, target, atk: AttackData) -> DamageResult:
     res = DamageResult()
 
     # 1. Проверка уклонения
-    evade_chance = max(0.0, target.evade_pct - attacker.accuracy_pct)
+    # Оглушение, Паралич, Ужас снимают уклонение цели
+    target_evade = target.evade_pct
+    if getattr(target, "_stunned", False) or \
+       getattr(target, "_paralyzed", False) or \
+       getattr(target, "_terrified", False):
+        target_evade = 0.0
+
+    evade_chance = max(0.0, target_evade - attacker.accuracy_pct)
     if random.random() < evade_chance:
         res.evaded = True
         res.log.append(f"EVADE ({evade_chance*100:.1f}% шанс)")
@@ -98,8 +130,9 @@ def resolve_damage(attacker, target, atk: AttackData) -> DamageResult:
 
     # Абсорб — урон превращается в лечение
     if resist == "absorb":
-        raw = _raw_damage(atk.scaling_stat, atk.weapon_mult)
-        res.damage = -int(round(raw))   # отрицательный урон = лечение
+        stat = _effective_scaling_stat(attacker, atk.scaling_stat)
+        raw = _raw_damage(stat, atk.weapon_mult)
+        res.damage = -int(round(raw))
         res.log.append(f"ABSORB heal={-res.damage}")
         return res
 
@@ -107,8 +140,9 @@ def resolve_damage(attacker, target, atk: AttackData) -> DamageResult:
         res.log.append("IMMUNE")
         return res
 
-    # 3. Базовый урон
-    raw = _raw_damage(atk.scaling_stat, atk.weapon_mult)
+    # 3. Базовый урон с учётом Слабости атакующего
+    stat = _effective_scaling_stat(attacker, atk.scaling_stat)
+    raw = _raw_damage(stat, atk.weapon_mult)
 
     # 4. Крит
     if atk.can_crit and random.random() < attacker.crit_chance:
@@ -121,12 +155,12 @@ def resolve_damage(attacker, target, atk: AttackData) -> DamageResult:
     else:
         def_pct = _defense_pct(target.phys_def_stat, target.armor)
 
-    # 6. Итоговый урон с сопротивлением
+    # 6. Итоговый урон
     final = raw * resist * (1.0 - def_pct)
-    res.damage = max(1, int(round(final)))  # минимум 1 урона если попало
+    res.damage = max(1, int(round(final)))
 
     # 7. Stagger
-    res.stagger_fill = atk.stagger_fill * resist  # иммунитет к стихии = нет stagger от неё
+    res.stagger_fill = atk.stagger_fill * (resist if isinstance(resist, float) else 1.0)
 
     res.log.append(
         f"raw={raw:.1f} resist=x{resist} "
@@ -135,3 +169,14 @@ def resolve_damage(attacker, target, atk: AttackData) -> DamageResult:
         f"-> {res.damage} dmg  stagger+{res.stagger_fill:.2f}"
     )
     return res
+
+
+# --- Лечение с учётом Горения ---
+
+def resolve_heal(target, amount: int) -> int:
+    """
+    Применяет модификатор лечения от Горения и возвращает итоговое значение.
+    Вызывающий код должен сам применить heal().
+    """
+    mult = getattr(target, "_burn_heal_mod", 1.0)
+    return max(0, int(round(amount * mult)))

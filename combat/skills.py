@@ -15,11 +15,11 @@ from combat.ctb import ActionWeight
 # Типы целей
 # ---------------------------------------------------------------------------
 
-TARGET_SINGLE   = "single"    # одна цель
-TARGET_SELF     = "self"      # только пользователь
-TARGET_ALL_FOE  = "all_foe"   # все враги
-TARGET_ALL_ALLY = "all_ally"  # все союзники
-TARGET_AREA_FOE = "area_foe"  # враги в ближней зоне (определяется контекстом боя)
+TARGET_SINGLE   = "single"
+TARGET_SELF     = "self"
+TARGET_ALL_FOE  = "all_foe"
+TARGET_ALL_ALLY = "all_ally"
+TARGET_AREA_FOE = "area_foe"
 
 
 # ---------------------------------------------------------------------------
@@ -32,12 +32,12 @@ class Skill:
     skill_id        — уникальный строковый идентификатор
     name            — отображаемое имя
     tier            — ступень цепочки (1/2/3); пассивы = 0
-    chain_id        — идентификатор цепочки (все ступени одной цепочки имеют одинаковый)
+    chain_id        — идентификатор цепочки
     resource_cost   — стоимость в ресурсе персонажа
-    action_weight   — вес для CTB (ActionWeight.LIGHT / MEDIUM / HEAVY)
+    action_weight   — вес для CTB
     target_type     — тип цели
-    execute         — callable(user, targets, ctx) — основная логика скилла
-    is_passive      — пассивный скилл (не используется активно)
+    execute         — callable(user, targets, ctx)
+    is_passive      — пассивный скилл
     description     — текст для UI
     """
     skill_id:       str
@@ -53,7 +53,6 @@ class Skill:
 
     @property
     def cooldown_length(self):
-        """Длина кулдауна равна номеру ступени. Пассивы и tier=0 — без кулдауна."""
         return self.tier if self.tier > 0 else 0
 
 
@@ -62,13 +61,9 @@ class Skill:
 # ---------------------------------------------------------------------------
 
 class CooldownTracker:
-    """
-    Хранит текущие кулдауны цепочек для одного персонажа.
-    Кулдаун отсчитывается в ходах самого персонажа.
-    """
 
     def __init__(self):
-        self._cd: dict[str, int] = {}   # chain_id -> оставшиеся ходы
+        self._cd: dict[str, int] = {}
 
     def is_ready(self, skill: Skill) -> bool:
         if skill.is_passive:
@@ -80,7 +75,6 @@ class CooldownTracker:
             self._cd[skill.chain_id] = skill.cooldown_length
 
     def tick(self):
-        """Вызывается в начале хода персонажа — уменьшает все кулдауны на 1."""
         for chain_id in list(self._cd):
             self._cd[chain_id] -= 1
             if self._cd[chain_id] <= 0:
@@ -95,10 +89,6 @@ class CooldownTracker:
 # ---------------------------------------------------------------------------
 
 class SkillSet:
-    """
-    Набор скиллов одного персонажа.
-    Хранит все известные скиллы и трекер кулдаунов.
-    """
 
     def __init__(self):
         self._skills: dict[str, Skill] = {}
@@ -111,26 +101,32 @@ class SkillSet:
         return self._skills.get(skill_id)
 
     def all_active(self):
-        """Все неп пассивные скиллы."""
         return [s for s in self._skills.values() if not s.is_passive]
 
     def all_passive(self):
         return [s for s in self._skills.values() if s.is_passive]
 
-    def available(self):
-        """Скиллы готовые к использованию (не на кулдауне)."""
+    def available(self, owner=None):
+        """
+        Скиллы готовые к использованию.
+        Если передан owner — проверяем блокировку от статусов (Замедление, Тишина).
+        """
+        from combat.status import skills_blocked
+        if owner is not None and skills_blocked(owner):
+            return []
         return [s for s in self.all_active()
                 if self.cooldowns.is_ready(s)]
 
     def use(self, skill_id: str, user, targets, ctx=None) -> bool:
         """
         Попытка использовать скилл.
-        Проверяет ресурс и кулдаун, выполняет callback, ставит на кулдаун.
-        Возвращает True при успехе.
-        ctx — объект контекста боя (передаётся в execute, может быть None в тестах).
+        Проверяет статусную блокировку, ресурс и кулдаун.
         """
+        from combat.status import skills_blocked
         skill = self.get(skill_id)
         if skill is None:
+            return False
+        if skills_blocked(user):
             return False
         if not self.cooldowns.is_ready(skill):
             return False
@@ -142,5 +138,4 @@ class SkillSet:
         return True
 
     def tick_cooldowns(self):
-        """Вызывается в начале хода персонажа."""
         self.cooldowns.tick()
