@@ -1,19 +1,29 @@
 """
-Скиллы Грэма Воса — ветвь «Режущее оружие» (стартовая).
-Остальные ветви добавляются по ходу нарратива.
+Скиллы Грэма Воса.
+
+Ветви:
+  - Режущее оружие   (стартовая)
+  - Кулачный бой     (открывается по нарративу)
+  - Парирование      (открывается через личный квест)
 """
 
-from combat.skills import Skill, SkillSet, TARGET_SINGLE, TARGET_AREA_FOE
-from combat.ctb import ActionWeight
-from combat.damage import resolve_damage, AttackData, DMG_SLASH
+import random
+
+from combat.skills import Skill, SkillSet, TARGET_SINGLE, TARGET_AREA_FOE, TARGET_SELF
+from combat.ctb import ActionWeight, push_back
+from combat.damage import resolve_damage, AttackData, DMG_SLASH, DMG_BLUNT
 from combat.stagger import add_stagger
 from combat.status import (
     apply_status,
-    make_bleed, make_bleed_heavy, make_stun,
-    has_status, S_STAGGER_BREAK,
+    make_bleed, make_bleed_heavy, make_stun, make_weakness,
+    has_status, get_status,
+    S_STAGGER_BREAK, S_STUN, S_WEAKNESS,
+    StatusEffect,
 )
 
-BRANCH_CUTTING = "Режущее оружие"
+BRANCH_CUTTING  = "Режущее оружие"
+BRANCH_BRAWL    = "Кулачный бой"
+BRANCH_PARRY    = "Парирование"
 
 
 # ---------------------------------------------------------------------------
@@ -29,14 +39,13 @@ def _apply_result(target, result):
         add_stagger(target, result.stagger_fill * target.stagger_max)
 
 
-# ---------------------------------------------------------------------------
-# Ветвь: Режущее оружие
-# ---------------------------------------------------------------------------
+# ===========================================================================
+# ВЕТВЬ: РЕЖУЩЕЕ ОРУЖИЕ
+# ===========================================================================
 
 # --- Кровопускание ---
 
 def _bloodletting_1(user, targets, ctx):
-    import random
     for t in targets:
         atk = AttackData(DMG_SLASH, scaling_stat=user.mettle,
                          weapon_mult=0.9, stagger_fill=0.10)
@@ -46,7 +55,6 @@ def _bloodletting_1(user, targets, ctx):
             apply_status(t, make_bleed(duration=3, power=8.0))
 
 def _bloodletting_2(user, targets, ctx):
-    import random
     for t in targets:
         atk = AttackData(DMG_SLASH, scaling_stat=user.mettle,
                          weapon_mult=0.9, stagger_fill=0.10)
@@ -56,7 +64,6 @@ def _bloodletting_2(user, targets, ctx):
             apply_status(t, make_bleed_heavy(duration=3, power=14.0))
 
 def _bloodletting_3(user, targets, ctx):
-    import random
     for t in targets:
         atk = AttackData(DMG_SLASH, scaling_stat=user.mettle,
                          weapon_mult=0.9, stagger_fill=0.10)
@@ -91,14 +98,12 @@ def _cleave_3(user, targets, ctx):
         res = resolve_damage(user, t, atk)
         _apply_result(t, res)
         if res.hit and has_status(t, S_STAGGER_BREAK):
-            from combat.ctb import push_back
             push_back(t, 15.0)
 
 
 # --- Натиск ---
 
 def _rush_1(user, targets, ctx):
-    from combat.ctb import push_back
     for t in targets:
         atk = AttackData(DMG_SLASH, scaling_stat=user.mettle,
                          weapon_mult=1.0, stagger_fill=0.15)
@@ -108,7 +113,6 @@ def _rush_1(user, targets, ctx):
             push_back(t, 5.0)
 
 def _rush_2(user, targets, ctx):
-    from combat.ctb import push_back
     for t in targets:
         atk = AttackData(DMG_SLASH, scaling_stat=user.mettle,
                          weapon_mult=1.0, stagger_fill=0.15)
@@ -119,7 +123,6 @@ def _rush_2(user, targets, ctx):
             push_back(t, 12.0 if bonus else 7.0)
 
 def _rush_3(user, targets, ctx):
-    from combat.ctb import push_back
     for t in targets:
         atk = AttackData(DMG_SLASH, scaling_stat=user.mettle,
                          weapon_mult=1.0, stagger_fill=0.20)
@@ -130,12 +133,327 @@ def _rush_3(user, targets, ctx):
             apply_status(t, make_stun(duration=1))
 
 
-# ---------------------------------------------------------------------------
-# Сборка SkillSet Грэма
-# ---------------------------------------------------------------------------
+# ===========================================================================
+# ВЕТВЬ: КУЛАЧНЫЙ БОЙ
+# ===========================================================================
+
+# --- Прямой (серия быстрых ударов) ---
+
+def _jab_1(user, targets, ctx):
+    """Два удара. Каждый вносит вклад в stagger."""
+    for t in targets:
+        for _ in range(2):
+            atk = AttackData(DMG_BLUNT, scaling_stat=user.mettle,
+                             weapon_mult=0.55, stagger_fill=0.12)
+            res = resolve_damage(user, t, atk)
+            _apply_result(t, res)
+            if res.hit and ctx:
+                ctx.log.append(
+                    f"{user.name} -> {t.name}: {'КРИТ' if res.crit else 'удар'} {res.damage} [Прямой]"
+                )
+
+def _jab_2(user, targets, ctx):
+    """Три удара. Последний с повышенным шансом Оглушения."""
+    for t in targets:
+        for i in range(3):
+            atk = AttackData(DMG_BLUNT, scaling_stat=user.mettle,
+                             weapon_mult=0.55, stagger_fill=0.12)
+            res = resolve_damage(user, t, atk)
+            _apply_result(t, res)
+            if res.hit and ctx:
+                ctx.log.append(
+                    f"{user.name} -> {t.name}: {'КРИТ' if res.crit else 'удар'} {res.damage} [Прямой]"
+                )
+            if res.hit and i == 2 and random.random() < 0.45:
+                apply_status(t, make_stun(duration=1))
+
+def _jab_3(user, targets, ctx):
+    """Четыре удара. Если цель под Оглушением — последний удар гарантирует Откат."""
+    for t in targets:
+        target_stunned = has_status(t, S_STUN)
+        for i in range(4):
+            atk = AttackData(DMG_BLUNT, scaling_stat=user.mettle,
+                             weapon_mult=0.55, stagger_fill=0.12)
+            res = resolve_damage(user, t, atk)
+            _apply_result(t, res)
+            if res.hit and ctx:
+                ctx.log.append(
+                    f"{user.name} -> {t.name}: {'КРИТ' if res.crit else 'удар'} {res.damage} [Прямой]"
+                )
+            if res.hit and i == 3 and target_stunned:
+                push_back(t, 10.0)
+
+
+# --- Захват ---
+
+# Статус захвата — цель не может действовать, уклоняться или контратаковать
+S_GRAB_CUSTOM = "grab"
+
+def _make_grab_effect(duration):
+    def on_apply(owner, effect):
+        owner._stunned = True        # блокирует действия
+        owner._paralyzed = True      # снимает уклонение
+        push_back(owner, 8.0)
+    def on_remove(owner, effect):
+        owner._stunned = False
+        owner._paralyzed = False
+    return StatusEffect(S_GRAB_CUSTOM, duration=duration,
+                        on_apply=on_apply, on_remove=on_remove)
+
+def _grab_1(user, targets, ctx):
+    """Захват на 1 ход. Цель удерживается."""
+    for t in targets:
+        apply_status(t, _make_grab_effect(duration=1))
+        if ctx:
+            ctx.log.append(f"{user.name} захватывает {t.name}!")
+
+def _grab_2(user, targets, ctx):
+    """Захват на 2 хода. Дополнительно накладывает Уязвимость (снижение физзащиты)."""
+    for t in targets:
+        apply_status(t, _make_grab_effect(duration=2))
+        from combat.status import make_vulnerable
+        apply_status(t, make_vulnerable(duration=2, physical=True))
+        if ctx:
+            ctx.log.append(f"{user.name} захватывает {t.name} и ломает защиту!")
+
+def _grab_3(user, targets, ctx):
+    """Захват с броском. Откат и урон от столкновения с землёй."""
+    for t in targets:
+        apply_status(t, _make_grab_effect(duration=1))
+        # Урон от броска
+        atk = AttackData(DMG_BLUNT, scaling_stat=user.mettle,
+                         weapon_mult=1.2, stagger_fill=0.25)
+        res = resolve_damage(user, t, atk)
+        _apply_result(t, res)
+        push_back(t, 12.0)
+        if ctx:
+            ctx.log.append(
+                f"{user.name} бросает {t.name}! {res.damage} урона от удара о землю."
+            )
+
+
+# --- Удар в корпус ---
+
+S_BODY_EXHAUSTION = "body_exhaustion"  # Истощение тела — ослабление физатаки
+
+def _make_body_exhaustion(duration):
+    """Снижает эффективность атакующих параметров цели."""
+    def on_apply(owner, effect):
+        owner._exhaust_saved = getattr(owner, "_weakness_mult", 1.0)
+        owner._weakness_mult = max(0.6, owner._exhaust_saved * 0.8)
+    def on_remove(owner, effect):
+        if hasattr(owner, "_exhaust_saved"):
+            owner._weakness_mult = owner._exhaust_saved
+            del owner._exhaust_saved
+    return StatusEffect(S_BODY_EXHAUSTION, duration=duration,
+                        on_apply=on_apply, on_remove=on_remove)
+
+def _body_blow_1(user, targets, ctx):
+    """Умеренный шанс наложить Истощение тела."""
+    for t in targets:
+        atk = AttackData(DMG_BLUNT, scaling_stat=user.mettle,
+                         weapon_mult=0.85, stagger_fill=0.15)
+        res = resolve_damage(user, t, atk)
+        _apply_result(t, res)
+        if res.hit and random.random() < 0.45:
+            apply_status(t, _make_body_exhaustion(duration=2))
+            if ctx:
+                ctx.log.append(f"{t.name}: Истощение тела.")
+
+def _body_blow_2(user, targets, ctx):
+    """Повышенный шанс. Дополнительно снижает физзащиту цели на 2 хода."""
+    for t in targets:
+        atk = AttackData(DMG_BLUNT, scaling_stat=user.mettle,
+                         weapon_mult=0.85, stagger_fill=0.15)
+        res = resolve_damage(user, t, atk)
+        _apply_result(t, res)
+        if res.hit and random.random() < 0.65:
+            apply_status(t, _make_body_exhaustion(duration=2))
+            from combat.status import make_vulnerable
+            apply_status(t, make_vulnerable(duration=2, physical=True))
+            if ctx:
+                ctx.log.append(f"{t.name}: Истощение тела + сниженная защита.")
+
+def _body_blow_3(user, targets, ctx):
+    """Высокий шанс. Если уже под Истощением тела — дополнительно Слабость."""
+    for t in targets:
+        atk = AttackData(DMG_BLUNT, scaling_stat=user.mettle,
+                         weapon_mult=0.85, stagger_fill=0.15)
+        res = resolve_damage(user, t, atk)
+        _apply_result(t, res)
+        if res.hit and random.random() < 0.80:
+            had_exhaustion = has_status(t, S_BODY_EXHAUSTION)
+            apply_status(t, _make_body_exhaustion(duration=2))
+            if had_exhaustion:
+                apply_status(t, make_weakness(duration=2))
+                if ctx:
+                    ctx.log.append(f"{t.name}: Истощение + Слабость.")
+            elif ctx:
+                ctx.log.append(f"{t.name}: Истощение тела.")
+
+
+# ===========================================================================
+# ВЕТВЬ: ПАРИРОВАНИЕ
+# ===========================================================================
+
+# Статус «готовность к парированию» — живёт на самом Грэме
+S_PARRY_READY   = "parry_ready"
+S_COUNTER_READY = "counter_ready"
+S_IRON_STANCE   = "iron_stance"
+
+# Константы
+_PARRY_ENERGY_GAIN  = 20    # Энергия при успешном парировании
+_IRON_STANCE_DR     = 0.20  # снижение входящего урона (20%)
+_IRON_STANCE_ENERGY = 8     # Энергия за каждый полученный удар
+
+
+def _make_parry_ready(duration, chance, energy_gain):
+    """Бафф-маркер: следующий удар по Грэму с шансом parry_chance парируется."""
+    def on_apply(owner, effect):
+        owner._parry_chance   = chance
+        owner._parry_energy   = energy_gain
+        owner._parry_active   = True
+    def on_remove(owner, effect):
+        owner._parry_chance  = 0.0
+        owner._parry_energy  = 0
+        owner._parry_active  = False
+    return StatusEffect(S_PARRY_READY, duration=duration,
+                        on_apply=on_apply, on_remove=on_remove)
+
+def _make_counter_ready(duration):
+    """Бафф-маркер: Встречный удар — если враг атакует, Грэм контратакует вне очереди."""
+    def on_apply(owner, effect):
+        owner._counter_active = True
+    def on_remove(owner, effect):
+        owner._counter_active = False
+    return StatusEffect(S_COUNTER_READY, duration=duration,
+                        on_apply=on_apply, on_remove=on_remove)
+
+def _make_iron_stance(duration, cc_immune=False):
+    """Снижает входящий урон. Каждый удар генерирует Энергию."""
+    def on_apply(owner, effect):
+        owner._iron_stance_active = True
+        owner._iron_dr = _IRON_STANCE_DR
+        if cc_immune:
+            owner._iron_cc_immune = True
+    def on_remove(owner, effect):
+        owner._iron_stance_active = False
+        owner._iron_dr = 0.0
+        owner._iron_cc_immune = False
+    return StatusEffect(S_IRON_STANCE, duration=duration,
+                        on_apply=on_apply, on_remove=on_remove)
+
+
+# --- Парирование I/II/III ---
+
+def _parry_1(user, targets, ctx):
+    """Бафф на себя — 2 хода, 40% шанс парирования."""
+    apply_status(user, _make_parry_ready(duration=2, chance=0.40,
+                                         energy_gain=_PARRY_ENERGY_GAIN))
+    if ctx:
+        ctx.log.append(f"{user.name} принимает стойку парирования.")
+
+def _parry_2(user, targets, ctx):
+    """Бафф на себя — 2 хода, 60% шанс, больше Энергии при успехе."""
+    apply_status(user, _make_parry_ready(duration=2, chance=0.60,
+                                         energy_gain=_PARRY_ENERGY_GAIN + 10))
+    if ctx:
+        ctx.log.append(f"{user.name} принимает усиленную стойку парирования.")
+
+def _parry_3(user, targets, ctx):
+    """
+    Бафф на себя — 2 хода, 60% шанс.
+    Успешное парирование автоматически вызывает контратаку вне очереди.
+    Флаг _parry_auto_counter читается в обработчике входящего удара.
+    """
+    effect = _make_parry_ready(duration=2, chance=0.60,
+                                energy_gain=_PARRY_ENERGY_GAIN + 10)
+    # Дополнительный флаг автоконтратаки
+    original_apply = effect.on_apply
+    def on_apply_extended(owner, eff):
+        original_apply(owner, eff)
+        owner._parry_auto_counter = True
+    effect.on_apply = on_apply_extended
+
+    original_remove = effect.on_remove
+    def on_remove_extended(owner, eff):
+        original_remove(owner, eff)
+        owner._parry_auto_counter = False
+    effect.on_remove = on_remove_extended
+
+    apply_status(user, effect)
+    if ctx:
+        ctx.log.append(f"{user.name} готовится к парированию с контратакой.")
+
+
+# --- Встречный удар I/II/III ---
+
+def _riposte_1(user, targets, ctx):
+    """Бафф на себя — 2 хода. Если враг атакует — ответный удар вне очереди."""
+    apply_status(user, _make_counter_ready(duration=2))
+    user._counter_mult  = 0.7
+    user._counter_stun  = False
+    if ctx:
+        ctx.log.append(f"{user.name} готовится к встречному удару.")
+
+def _riposte_2(user, targets, ctx):
+    """Бафф на себя — 2 хода. Повышенный урон ответного удара, шанс Оглушения."""
+    apply_status(user, _make_counter_ready(duration=2))
+    user._counter_mult  = 1.0
+    user._counter_stun  = True
+    user._counter_stun_chance = 0.40
+    if ctx:
+        ctx.log.append(f"{user.name} готовится к встречному удару (усил.).")
+
+def _riposte_3(user, targets, ctx):
+    """Бафф на себя — 3 хода. Ответный удар после тяжёлой атаки гарантирует Откат."""
+    apply_status(user, _make_counter_ready(duration=3))
+    user._counter_mult          = 1.0
+    user._counter_stun          = True
+    user._counter_stun_chance   = 0.40
+    user._counter_heavy_pushback = True
+    if ctx:
+        ctx.log.append(f"{user.name} готовится к встречному удару (макс.).")
+
+
+# --- Железная стойка I/II/III ---
+
+def _iron_stance_1(user, targets, ctx):
+    """Бафф на себя — 2 хода. Снижение входящего урона, Энергия за каждый удар."""
+    apply_status(user, _make_iron_stance(duration=2))
+    if ctx:
+        ctx.log.append(f"{user.name} принимает Железную стойку.")
+
+def _iron_stance_2(user, targets, ctx):
+    """Бафф на себя — 2 хода. Повышенное снижение урона, больше Энергии."""
+    effect = _make_iron_stance(duration=2)
+    original_apply = effect.on_apply
+    def on_apply_2(owner, eff):
+        original_apply(owner, eff)
+        owner._iron_dr = _IRON_STANCE_DR + 0.10   # 30% снижение
+        owner._iron_energy_bonus = 4               # дополнительная Энергия за удар
+    effect.on_apply = on_apply_2
+    apply_status(user, effect)
+    if ctx:
+        ctx.log.append(f"{user.name} принимает усиленную Железную стойку.")
+
+def _iron_stance_3(user, targets, ctx):
+    """Бафф на себя — 3 хода. Иммунитет к Откату и лёгкому Прорыву стойки."""
+    apply_status(user, _make_iron_stance(duration=3, cc_immune=True))
+    if ctx:
+        ctx.log.append(f"{user.name} принимает несокрушимую Железную стойку.")
+
+
+# ===========================================================================
+# СБОРКА SKILLSET
+# ===========================================================================
 
 def build_graham_skills() -> SkillSet:
     ss = SkillSet()
+
+    # -----------------------------------------------------------------------
+    # Режущее оружие
+    # -----------------------------------------------------------------------
 
     ss.register(Skill(
         skill_id="bloodletting_1", name="Кровопускание I",
@@ -201,6 +519,146 @@ def build_graham_skills() -> SkillSet:
         resource_cost=45, action_weight=ActionWeight.MEDIUM,
         target_type=TARGET_SINGLE, execute=_rush_3,
         description="Сбивает с ног. Накладывает Оглушение.",
+    ))
+
+    # -----------------------------------------------------------------------
+    # Кулачный бой
+    # -----------------------------------------------------------------------
+
+    ss.register(Skill(
+        skill_id="jab_1", name="Прямой I",
+        tier=1, chain_id="jab_1", branch_name=BRANCH_BRAWL,
+        resource_cost=20, action_weight=ActionWeight.LIGHT,
+        target_type=TARGET_SINGLE, execute=_jab_1,
+        description="Серия из двух ударов. Каждый вносит вклад в shatter-шкалу.",
+    ))
+    ss.register(Skill(
+        skill_id="jab_2", name="Прямой II",
+        tier=2, chain_id="jab_2", branch_name=BRANCH_BRAWL,
+        resource_cost=25, action_weight=ActionWeight.LIGHT,
+        target_type=TARGET_SINGLE, execute=_jab_2,
+        description="Три удара. Последний с шансом Оглушения.",
+    ))
+    ss.register(Skill(
+        skill_id="jab_3", name="Прямой III",
+        tier=3, chain_id="jab_3", branch_name=BRANCH_BRAWL,
+        resource_cost=35, action_weight=ActionWeight.MEDIUM,
+        target_type=TARGET_SINGLE, execute=_jab_3,
+        description="Четыре удара. По оглушённой цели последний удар гарантирует Откат.",
+    ))
+
+    ss.register(Skill(
+        skill_id="grab_1", name="Захват I",
+        tier=1, chain_id="grab_1", branch_name=BRANCH_BRAWL,
+        resource_cost=30, action_weight=ActionWeight.MEDIUM,
+        target_type=TARGET_SINGLE, execute=_grab_1,
+        description="Удерживает цель на 1 ход. Снимает уклонение и блокирует действия.",
+    ))
+    ss.register(Skill(
+        skill_id="grab_2", name="Захват II",
+        tier=2, chain_id="grab_2", branch_name=BRANCH_BRAWL,
+        resource_cost=40, action_weight=ActionWeight.MEDIUM,
+        target_type=TARGET_SINGLE, execute=_grab_2,
+        description="Удержание на 2 хода. Накладывает Уязвимость.",
+    ))
+    ss.register(Skill(
+        skill_id="grab_3", name="Захват III",
+        tier=3, chain_id="grab_3", branch_name=BRANCH_BRAWL,
+        resource_cost=50, action_weight=ActionWeight.HEAVY,
+        target_type=TARGET_SINGLE, execute=_grab_3,
+        description="Захват с броском. Урон от удара о землю и значительный Откат.",
+    ))
+
+    ss.register(Skill(
+        skill_id="body_blow_1", name="Удар в корпус I",
+        tier=1, chain_id="body_blow_1", branch_name=BRANCH_BRAWL,
+        resource_cost=25, action_weight=ActionWeight.MEDIUM,
+        target_type=TARGET_SINGLE, execute=_body_blow_1,
+        description="Прицельный удар. Умеренный шанс Истощения тела.",
+    ))
+    ss.register(Skill(
+        skill_id="body_blow_2", name="Удар в корпус II",
+        tier=2, chain_id="body_blow_2", branch_name=BRANCH_BRAWL,
+        resource_cost=30, action_weight=ActionWeight.MEDIUM,
+        target_type=TARGET_SINGLE, execute=_body_blow_2,
+        description="Повышенный шанс. Снижает физзащиту цели на 2 хода.",
+    ))
+    ss.register(Skill(
+        skill_id="body_blow_3", name="Удар в корпус III",
+        tier=3, chain_id="body_blow_3", branch_name=BRANCH_BRAWL,
+        resource_cost=40, action_weight=ActionWeight.MEDIUM,
+        target_type=TARGET_SINGLE, execute=_body_blow_3,
+        description="Высокий шанс. По цели с Истощением накладывает Слабость.",
+    ))
+
+    # -----------------------------------------------------------------------
+    # Парирование
+    # -----------------------------------------------------------------------
+
+    ss.register(Skill(
+        skill_id="parry_1", name="Парирование I",
+        tier=1, chain_id="parry_1", branch_name=BRANCH_PARRY,
+        resource_cost=20, action_weight=ActionWeight.LIGHT,
+        target_type=TARGET_SELF, execute=_parry_1,
+        description="Бафф 2 хода. Следующий удар по Грэму с 40% шансом парируется — урон снижен, Энергия восстановлена.",
+    ))
+    ss.register(Skill(
+        skill_id="parry_2", name="Парирование II",
+        tier=2, chain_id="parry_2", branch_name=BRANCH_PARRY,
+        resource_cost=25, action_weight=ActionWeight.LIGHT,
+        target_type=TARGET_SELF, execute=_parry_2,
+        description="Шанс парирования повышен до 60%. Больше Энергии при успехе.",
+    ))
+    ss.register(Skill(
+        skill_id="parry_3", name="Парирование III",
+        tier=3, chain_id="parry_3", branch_name=BRANCH_PARRY,
+        resource_cost=30, action_weight=ActionWeight.LIGHT,
+        target_type=TARGET_SELF, execute=_parry_3,
+        description="Успешное парирование автоматически вызывает контратаку вне очереди.",
+    ))
+
+    ss.register(Skill(
+        skill_id="riposte_1", name="Встречный удар I",
+        tier=1, chain_id="riposte_1", branch_name=BRANCH_PARRY,
+        resource_cost=25, action_weight=ActionWeight.LIGHT,
+        target_type=TARGET_SELF, execute=_riposte_1,
+        description="Бафф 2 хода. Если враг атакует Грэма — ответный удар вне очереди.",
+    ))
+    ss.register(Skill(
+        skill_id="riposte_2", name="Встречный удар II",
+        tier=2, chain_id="riposte_2", branch_name=BRANCH_PARRY,
+        resource_cost=30, action_weight=ActionWeight.LIGHT,
+        target_type=TARGET_SELF, execute=_riposte_2,
+        description="Урон ответного удара повышен. Шанс Оглушения при контратаке.",
+    ))
+    ss.register(Skill(
+        skill_id="riposte_3", name="Встречный удар III",
+        tier=3, chain_id="riposte_3", branch_name=BRANCH_PARRY,
+        resource_cost=40, action_weight=ActionWeight.LIGHT,
+        target_type=TARGET_SELF, execute=_riposte_3,
+        description="Бафф 3 хода. После тяжёлой атаки врага ответный удар гарантирует Откат.",
+    ))
+
+    ss.register(Skill(
+        skill_id="iron_stance_1", name="Железная стойка I",
+        tier=1, chain_id="iron_stance_1", branch_name=BRANCH_PARRY,
+        resource_cost=20, action_weight=ActionWeight.LIGHT,
+        target_type=TARGET_SELF, execute=_iron_stance_1,
+        description="Бафф 2 хода. Входящий урон снижен. Каждый удар генерирует Энергию.",
+    ))
+    ss.register(Skill(
+        skill_id="iron_stance_2", name="Железная стойка II",
+        tier=2, chain_id="iron_stance_2", branch_name=BRANCH_PARRY,
+        resource_cost=25, action_weight=ActionWeight.LIGHT,
+        target_type=TARGET_SELF, execute=_iron_stance_2,
+        description="Снижение урона и генерация Энергии повышены.",
+    ))
+    ss.register(Skill(
+        skill_id="iron_stance_3", name="Железная стойка III",
+        tier=3, chain_id="iron_stance_3", branch_name=BRANCH_PARRY,
+        resource_cost=35, action_weight=ActionWeight.LIGHT,
+        target_type=TARGET_SELF, execute=_iron_stance_3,
+        description="Бафф 3 хода. Иммунитет к Откату и лёгким формам Прорыва стойки.",
     ))
 
     return ss

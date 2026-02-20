@@ -294,27 +294,37 @@ screen battle_screen(ctx):
             ysize 340
             background Solid(COL_PANEL2)
 
-            vbox:
-                xpos 0
-                ypos 0
-                spacing 0
+            if skill_branch is None:
+                ## Уровень 1 — список ветвей (скролл на случай большого числа ветвей)
+                viewport:
+                    xpos 0
+                    ypos 0
+                    xsize 220
+                    ysize 340
+                    mousewheel True
+                    draggable True
+                    vbox:
+                        spacing 0
+                        if hasattr(ctx.current_actor, "skillset"):
+                            for branch_id, branch_name in ctx.current_actor.skillset.branches():
+                                textbutton branch_name:
+                                    xsize 220
+                                    ysize 68
+                                    background Solid(COL_BTN)
+                                    hover_background Solid(COL_BTN_HVR)
+                                    action SetScreenVariable("skill_branch", branch_id)
+                                    text_size 14
+                                    text_color COL_TEXT
+                                    text_xalign 0.1
 
-                if skill_branch is None:
-                    ## Уровень 1 — список ветвей
-                    if hasattr(ctx.current_actor, "skillset"):
-                        for branch_id, branch_name in ctx.current_actor.skillset.branches():
-                            textbutton branch_name:
-                                xsize 220
-                                ysize 68
-                                background Solid(COL_BTN)
-                                hover_background Solid(COL_BTN_HVR)
-                                action SetScreenVariable("skill_branch", branch_id)
-                                text_size 14
-                                text_color COL_TEXT
-                                text_xalign 0.1
+            else:
+                ## Уровень 2 — скиллы выбранной ветви со скроллом
+                vbox:
+                    xpos 0
+                    ypos 0
+                    xsize 220
+                    spacing 0
 
-                else:
-                    ## Уровень 2 — скиллы выбранной ветви
                     textbutton "< Назад":
                         xsize 220
                         ysize 40
@@ -325,28 +335,35 @@ screen battle_screen(ctx):
                         text_color COL_ACTIVE
                         text_xalign 0.1
 
-                    if hasattr(ctx.current_actor, "skillset"):
-                        for sk in ctx.current_actor.skillset.available_in_branch(skill_branch):
-                            $ sk_line = sk.name + "  [" + str(int(sk.resource_cost)) + "]"
-                            $ sk_all  = sk.target_type in ("all_foe", "all_ally")
-                            textbutton sk_line:
-                                xsize 220
-                                ysize 52
-                                background Solid(COL_BTN)
-                                hover_background Solid(COL_BTN_HVR)
-                                action If(sk_all,
-                                    true  = [SetScreenVariable("submenu", None),
-                                             SetScreenVariable("skill_branch", None),
-                                             SetScreenVariable("pick_mode", None),
-                                             SetScreenVariable("pick_action", None),
-                                             Return(("skill", sk.skill_id, None))],
-                                    false = [SetScreenVariable("submenu", None),
-                                             SetScreenVariable("skill_branch", None),
-                                             SetScreenVariable("pick_mode", "enemy"),
-                                             SetScreenVariable("pick_action", ("skill", sk.skill_id))])
-                                text_size 13
-                                text_color COL_TEXT
-                                text_xalign 0.1
+                    viewport:
+                        xsize 220
+                        ysize 300
+                        mousewheel True
+                        draggable True
+                        vbox:
+                            spacing 0
+                            if hasattr(ctx.current_actor, "skillset"):
+                                for sk in ctx.current_actor.skillset.available_in_branch(skill_branch):
+                                    $ sk_line = sk.name + "  [" + str(int(sk.resource_cost)) + "]"
+                                    $ sk_all  = sk.target_type in ("all_foe", "all_ally")
+                                    textbutton sk_line:
+                                        xsize 220
+                                        ysize 52
+                                        background Solid(COL_BTN)
+                                        hover_background Solid(COL_BTN_HVR)
+                                        action If(sk_all,
+                                            true  = [SetScreenVariable("submenu", None),
+                                                     SetScreenVariable("skill_branch", None),
+                                                     SetScreenVariable("pick_mode", None),
+                                                     SetScreenVariable("pick_action", None),
+                                                     Return(("skill", sk.skill_id, None))],
+                                            false = [SetScreenVariable("submenu", None),
+                                                     SetScreenVariable("skill_branch", None),
+                                                     SetScreenVariable("pick_mode", "enemy"),
+                                                     SetScreenVariable("pick_action", ("skill", sk.skill_id))])
+                                        text_size 13
+                                        text_color COL_TEXT
+                                        text_xalign 0.1
 
 
 ## ---------------------------------------------------------------------------
