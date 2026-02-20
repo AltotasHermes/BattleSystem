@@ -317,7 +317,7 @@ screen battle_screen(ctx):
                                 $ b_locked  = not ctx.current_actor.skillset.is_branch_unlocked(branch_name)
                                 $ b_bg      = Solid(COL_LOCKED) if b_locked else Solid(COL_BTN)
                                 $ b_col     = COL_DEAD if b_locked else COL_TEXT
-                                $ b_suffix  = " [заблок.]" if b_locked else ""
+                                $ b_suffix  = " [[заблок.]]" if b_locked else ""
                                 if b_locked:
                                     frame:
                                         xsize 240
