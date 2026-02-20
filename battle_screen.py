@@ -27,14 +27,21 @@ define COL_BTN      = "#1e1e1e"
 define COL_BTN_HVR  = "#2e2e2e"
 define COL_BTN_SEL  = "#2a2a1a"
 define COL_QUEUE    = "#1a1a2a"
+define COL_DEBUG    = "#0a1a0a"
+define COL_DEBUG_B  = "#1a2a1a"
+define COL_LOCKED   = "#2a1a1a"
+define COL_ON       = "#44aa44"
+define COL_OFF      = "#aa3333"
+define COL_CD       = "#886633"
 
 
 screen battle_screen(ctx):
 
-    default submenu     = None
+    default submenu      = None
     default skill_branch = None
-    default pick_mode   = None   ## None / "enemy" / "ally"
-    default pick_action = None   ## ("attack"|"skill", payload) — ожидает цель
+    default pick_mode    = None
+    default pick_action  = None
+    default debug_open   = False
 
     add Solid(COL_BG)
 
@@ -78,10 +85,10 @@ screen battle_screen(ctx):
             spacing 100
 
             for e in ctx.ui_enemy_data():
-                $ e_col      = COL_DEAD if not e["alive"] else (COL_ACTIVE if e["active"] else COL_ENEMY)
-                $ e_hp_c     = COL_HP_LOW if e["hp"] < e["hp_max"] * 0.3 else COL_HP_GOOD
+                $ e_col        = COL_DEAD if not e["alive"] else (COL_ACTIVE if e["active"] else COL_ENEMY)
+                $ e_hp_c       = COL_HP_LOW if e["hp"] < e["hp_max"] * 0.3 else COL_HP_GOOD
                 $ e_selectable = pick_mode == "enemy" and e["alive"]
-                $ e_frame_bg = "#2a2a0a" if e_selectable else "#181818"
+                $ e_frame_bg   = "#2a2a0a" if e_selectable else "#181818"
 
                 vbox:
                     xsize 220
@@ -283,23 +290,23 @@ screen battle_screen(ctx):
                 text line size 15 color COL_TEXT
 
     ## -----------------------------------------------------------------------
-    ## ПОДМЕНЮ НАВЫКИ — x:200..420, y:740..1080
-    ## Объявлено последним — рисуется поверх панели партии
+    ## ПОДМЕНЮ НАВЫКИ — x:200..440, y:740..1080
+    ## Объявлено позже панели партии — рисуется поверх неё
     ## -----------------------------------------------------------------------
     if submenu == "skills" and ctx.current_actor is not None and not ctx.current_actor.is_enemy:
         frame:
             xpos 200
             ypos 740
-            xsize 220
+            xsize 240
             ysize 340
             background Solid(COL_PANEL2)
 
             if skill_branch is None:
-                ## Уровень 1 — список ветвей (скролл на случай большого числа ветвей)
+                ## Уровень 1 — список ветвей со статусом блокировки
                 viewport:
                     xpos 0
                     ypos 0
-                    xsize 220
+                    xsize 240
                     ysize 340
                     mousewheel True
                     draggable True
@@ -307,26 +314,41 @@ screen battle_screen(ctx):
                         spacing 0
                         if hasattr(ctx.current_actor, "skillset"):
                             for branch_id, branch_name in ctx.current_actor.skillset.branches():
-                                textbutton branch_name:
-                                    xsize 220
-                                    ysize 68
-                                    background Solid(COL_BTN)
-                                    hover_background Solid(COL_BTN_HVR)
-                                    action SetScreenVariable("skill_branch", branch_id)
-                                    text_size 14
-                                    text_color COL_TEXT
-                                    text_xalign 0.1
+                                $ b_locked  = not ctx.current_actor.skillset.is_branch_unlocked(branch_name)
+                                $ b_bg      = Solid(COL_LOCKED) if b_locked else Solid(COL_BTN)
+                                $ b_col     = COL_DEAD if b_locked else COL_TEXT
+                                $ b_suffix  = " [заблок.]" if b_locked else ""
+                                if b_locked:
+                                    frame:
+                                        xsize 240
+                                        ysize 68
+                                        background b_bg
+                                        text (branch_name + b_suffix):
+                                            size 13
+                                            color b_col
+                                            xalign 0.1
+                                            yalign 0.5
+                                else:
+                                    textbutton (branch_name + b_suffix):
+                                        xsize 240
+                                        ysize 68
+                                        background b_bg
+                                        hover_background Solid(COL_BTN_HVR)
+                                        action SetScreenVariable("skill_branch", branch_id)
+                                        text_size 13
+                                        text_color b_col
+                                        text_xalign 0.1
 
             else:
-                ## Уровень 2 — скиллы выбранной ветви со скроллом
+                ## Уровень 2 — скиллы выбранной ветви с кулдаунами
                 vbox:
                     xpos 0
                     ypos 0
-                    xsize 220
+                    xsize 240
                     spacing 0
 
                     textbutton "< Назад":
-                        xsize 220
+                        xsize 240
                         ysize 40
                         background Solid(COL_BTN)
                         hover_background Solid(COL_BTN_HVR)
@@ -336,34 +358,210 @@ screen battle_screen(ctx):
                         text_xalign 0.1
 
                     viewport:
-                        xsize 220
+                        xsize 240
                         ysize 300
                         mousewheel True
                         draggable True
                         vbox:
                             spacing 0
                             if hasattr(ctx.current_actor, "skillset"):
-                                for sk in ctx.current_actor.skillset.available_in_branch(skill_branch):
-                                    $ sk_line = sk.name + "  [" + str(int(sk.resource_cost)) + "]"
-                                    $ sk_all  = sk.target_type in ("all_foe", "all_ally")
-                                    textbutton sk_line:
-                                        xsize 220
-                                        ysize 52
-                                        background Solid(COL_BTN)
-                                        hover_background Solid(COL_BTN_HVR)
-                                        action If(sk_all,
-                                            true  = [SetScreenVariable("submenu", None),
-                                                     SetScreenVariable("skill_branch", None),
-                                                     SetScreenVariable("pick_mode", None),
-                                                     SetScreenVariable("pick_action", None),
-                                                     Return(("skill", sk.skill_id, None))],
-                                            false = [SetScreenVariable("submenu", None),
-                                                     SetScreenVariable("skill_branch", None),
-                                                     SetScreenVariable("pick_mode", "enemy"),
-                                                     SetScreenVariable("pick_action", ("skill", sk.skill_id))])
-                                        text_size 13
-                                        text_color COL_TEXT
-                                        text_xalign 0.1
+                                for sk in ctx.current_actor.skillset.all_in_branch(skill_branch):
+                                    $ sk_ready   = ctx.current_actor.skillset.ui_skill_available(sk)
+                                    $ sk_label   = ctx.current_actor.skillset.ui_skill_label(sk)
+                                    $ sk_all     = sk.target_type in ("all_foe", "all_ally")
+                                    $ sk_bg      = Solid(COL_CD) if not sk_ready else Solid(COL_BTN)
+                                    $ sk_col     = COL_DEAD if not sk_ready else COL_TEXT
+                                    if sk_ready:
+                                        textbutton sk_label:
+                                            xsize 240
+                                            ysize 52
+                                            background sk_bg
+                                            hover_background Solid(COL_BTN_HVR)
+                                            action If(sk_all,
+                                                true  = [SetScreenVariable("submenu", None),
+                                                         SetScreenVariable("skill_branch", None),
+                                                         SetScreenVariable("pick_mode", None),
+                                                         SetScreenVariable("pick_action", None),
+                                                         Return(("skill", sk.skill_id, None))],
+                                                false = [SetScreenVariable("submenu", None),
+                                                         SetScreenVariable("skill_branch", None),
+                                                         SetScreenVariable("pick_mode", "enemy"),
+                                                         SetScreenVariable("pick_action", ("skill", sk.skill_id))])
+                                            text_size 13
+                                            text_color sk_col
+                                            text_xalign 0.05
+                                    else:
+                                        frame:
+                                            xsize 240
+                                            ysize 52
+                                            background sk_bg
+                                            text sk_label:
+                                                size 13
+                                                color sk_col
+                                                xalign 0.05
+                                                yalign 0.5
+
+    ## -----------------------------------------------------------------------
+    ## ДЕБАГ-МЕНЮ — левый верхний угол, x:0..280, y:0..высота
+    ## Открывается кнопкой [DBG] в левом углу
+    ## -----------------------------------------------------------------------
+    frame:
+        xpos 0
+        ypos 0
+        xsize 60
+        ysize 36
+        background Solid("#1a0a0a")
+
+        textbutton ("[[DBG]]" if not debug_open else "[[X]]"):
+            xsize 60
+            ysize 36
+            background Solid("#1a0a0a")
+            hover_background Solid("#2a1a1a")
+            action ToggleScreenVariable("debug_open", True, False)
+            text_size 13
+            text_color "#cc6644"
+            text_xalign 0.5
+
+    if debug_open and ctx.current_actor is not None and hasattr(ctx.current_actor, "skillset"):
+        frame:
+            xpos 0
+            ypos 36
+            xsize 280
+            background Solid(COL_DEBUG)
+
+            vbox:
+                xpos 0
+                ypos 0
+                spacing 0
+
+                ## Заголовок
+                frame:
+                    xsize 280
+                    ysize 30
+                    background Solid(COL_DEBUG_B)
+                    text "ДЕБАГ — ВЕТВИ НАВЫКОВ":
+                        size 12
+                        color COL_ACTIVE
+                        xalign 0.5
+                        yalign 0.5
+
+                ## Список всех ветвей с переключателем
+                for branch_id, branch_name in ctx.current_actor.skillset.branches():
+                    $ db_on  = ctx.current_actor.skillset.is_branch_unlocked(branch_name)
+                    $ db_bg  = Solid("#0a1f0a") if db_on else Solid("#1f0a0a")
+                    $ db_col = COL_ON if db_on else COL_OFF
+                    $ db_lbl = "[[ВКЛ]]" if db_on else "[[ВЫКЛ]]"
+
+                    frame:
+                        xsize 280
+                        ysize 42
+                        background db_bg
+
+                        hbox:
+                            xpos 8
+                            yalign 0.5
+                            spacing 8
+
+                            text branch_name:
+                                size 12
+                                color COL_TEXT
+                                yalign 0.5
+                                xsize 190
+
+                            if db_on:
+                                textbutton db_lbl:
+                                    xsize 70
+                                    ysize 36
+                                    background Solid("#154015")
+                                    hover_background Solid("#1a5a1a")
+                                    action Function(ctx.current_actor.skillset.lock_branch, branch_name)
+                                    text_size 12
+                                    text_color COL_ON
+                                    text_xalign 0.5
+                            else:
+                                textbutton db_lbl:
+                                    xsize 70
+                                    ysize 36
+                                    background Solid("#401515")
+                                    hover_background Solid("#5a1a1a")
+                                    action Function(ctx.current_actor.skillset.unlock_branch, branch_name)
+                                    text_size 12
+                                    text_color COL_OFF
+                                    text_xalign 0.5
+
+                ## Разделитель
+                frame:
+                    xsize 280
+                    ysize 1
+                    background Solid(COL_BORDER)
+
+                ## Пассивные скиллы
+                frame:
+                    xsize 280
+                    ysize 30
+                    background Solid(COL_DEBUG_B)
+                    text "ПАССИВНЫЕ НАВЫКИ":
+                        size 12
+                        color COL_ACTIVE
+                        xalign 0.5
+                        yalign 0.5
+
+                python:
+                    _passives = ctx.current_actor.skillset.all_passive()
+
+                if len(_passives) == 0:
+                    frame:
+                        xsize 280
+                        ysize 36
+                        background Solid(COL_DEBUG)
+                        text "нет пассивных навыков":
+                            size 12
+                            color COL_DEAD
+                            xalign 0.5
+                            yalign 0.5
+                else:
+                    for ps in _passives:
+                        $ ps_on  = ps.unlocked
+                        $ ps_bg  = Solid("#0a1f0a") if ps_on else Solid("#1f0a0a")
+                        $ ps_lbl = "[[ВКЛ]]" if ps_on else "[[ВЫКЛ]]"
+                        $ ps_col = COL_ON if ps_on else COL_OFF
+
+                        frame:
+                            xsize 280
+                            ysize 42
+                            background ps_bg
+
+                            hbox:
+                                xpos 8
+                                yalign 0.5
+                                spacing 8
+
+                                text ps.name:
+                                    size 12
+                                    color COL_TEXT
+                                    yalign 0.5
+                                    xsize 190
+
+                                if ps_on:
+                                    textbutton ps_lbl:
+                                        xsize 70
+                                        ysize 36
+                                        background Solid("#154015")
+                                        hover_background Solid("#1a5a1a")
+                                        action SetField(ps, "unlocked", False)
+                                        text_size 12
+                                        text_color COL_ON
+                                        text_xalign 0.5
+                                else:
+                                    textbutton ps_lbl:
+                                        xsize 70
+                                        ysize 36
+                                        background Solid("#401515")
+                                        hover_background Solid("#5a1a1a")
+                                        action SetField(ps, "unlocked", True)
+                                        text_size 12
+                                        text_color COL_OFF
+                                        text_xalign 0.5
 
 
 ## ---------------------------------------------------------------------------
@@ -375,6 +573,8 @@ label test_battle:
     python:
         graham = make_graham()
         graham.skillset = build_graham_skills()
+        ## Стартовая ветвь открыта, остальные заблокированы для демонстрации
+        graham.skillset.unlock_branch("Режущее оружие")
         graham.resource_current = graham.resource_max
         enemies = [make_dummy_grunt(), make_dummy_mage()]
         ctx = BattleContext([graham], enemies)
