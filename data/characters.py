@@ -5,7 +5,7 @@ from combat.stagger import init_stagger
 def make_graham(level=1):
     """Грэм Вос — стартовые статы (1 уровень)."""
     c = Combatant(
-        name="Graham Vos",
+        name="Грэм Вос",
         mettle=18, sense=10, finesse=12, glamour=6, luck=4,
         resource_type=RESOURCE_ENERGY,
         resource_max=120,
@@ -20,7 +20,7 @@ def make_graham(level=1):
 def make_dummy_grunt():
     """Рядовой противник. Усреднённые статы, без особенностей."""
     c = Combatant(
-        name="Grunt",
+        name="Монстр",
         mettle=10, sense=8, finesse=8, glamour=4, luck=2,
         resource_type=RESOURCE_ENERGY,
         resource_max=60,
@@ -33,7 +33,7 @@ def make_dummy_grunt():
 def make_dummy_mage():
     """Вражеский маг. Высокое sense, низкое mettle."""
     c = Combatant(
-        name="Mage Drone",
+        name="Маг",
         mettle=5, sense=15, finesse=8, glamour=10, luck=3,
         resource_type=RESOURCE_MP,
         resource_max=80,

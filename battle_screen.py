@@ -116,7 +116,7 @@ screen battle_screen(ctx):
 
                     ## Индикатор выбора
                     if e_selectable:
-                        text "[[ выбрать ]]" size 13 xalign 0.5 color COL_ACTIVE
+                        text "[[выбрать]]" size 13 xalign 0.5 color COL_ACTIVE
                     else:
                         text e["name"] size 15 xalign 0.5 color e_col
 
