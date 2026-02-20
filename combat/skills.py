@@ -192,15 +192,18 @@ class SkillSet:
             return False
         if not user.spend_resource(skill.resource_cost):
             return False
-        if skill.execute:
-            skill.execute(user, targets, ctx)
-        self.cooldowns.put_on_cooldown(skill)
-        # Записываем в лог имя использованного скилла
+
+        # Имя скилла пишется в лог первым — до эффектов
         # ВАЖНО: [[ ]] — экранирование для Ren'Py text-виджета
         if ctx is not None:
             cd = skill.cooldown_length
             cd_note = f" [[КД {cd}]]" if cd > 0 else ""
             ctx.log.append(f">> {user.name}: {skill.name}{cd_note}")
+
+        if skill.execute:
+            skill.execute(user, targets, ctx)
+
+        self.cooldowns.put_on_cooldown(skill)
         return True
 
     def tick_cooldowns(self):

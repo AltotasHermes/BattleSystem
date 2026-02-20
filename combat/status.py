@@ -603,3 +603,97 @@ def make_frostbite(duration=3, power=8.0):
     return StatusEffect(S_FROSTBITE, duration=duration, power=power,
                         on_apply=_frostbite_apply, on_remove=_frostbite_remove,
                         on_tick=_frostbite_tick)
+
+
+# ---------------------------------------------------------------------------
+# Русские названия статусов для UI
+# ---------------------------------------------------------------------------
+
+STATUS_NAMES_RU = {
+    S_BLEED:          "Кровотечение",
+    S_BLEED_HEAVY:    "Сильное кровотечение",
+    S_POISON:         "Яд",
+    S_POISON_HEAVY:   "Тяжёлый яд",
+    S_BURN:           "Горение",
+    S_STUN:           "Оглушение",
+    S_SLEEP:          "Сон",
+    S_CONFUSION:      "Смятение",
+    S_TERROR:         "Ужас",
+    S_GRAB:           "Захват",
+    S_PARALYZE:       "Паралич",
+    S_SILENCE:        "Тишина",
+    S_STAGGER_BREAK:  "Прорыв стойки",
+    S_BLIND:          "Слепота",
+    S_SLOW:           "Замедление",
+    S_SLOW_LIGHT:     "Замедление шага",
+    S_WEAKNESS:       "Слабость",
+    S_WEAKNESS_HEAVY: "Тяжёлая слабость",
+    S_DISTRACT:       "Рассеянность",
+    S_DRAIN_MP:       "Истощение духа",
+    S_DRAIN_ENERGY:   "Истощение тела",
+    S_VULNERABLE:     "Уязвимость",
+    S_DEFENSE_BREAK:  "Разрушение защиты",
+    S_TAUNT:          "Провокация",
+    S_CURSE:          "Проклятие",
+    S_CHILL:          "Озноб",
+    S_FROSTBITE:      "Обморожение",
+    S_WET:            "Промокший",
+    S_SCORCH:         "Опаление",
+    S_WITHER:         "Увядание",
+    S_REGEN:          "Регенерация",
+    S_FOCUS_ATK:      "Боевой фокус",
+    S_FOCUS_ACC:      "Фокус точности",
+    S_FOCUS_LUCK:     "Фокус удачи",
+    S_HASTE:          "Ускорение",
+    S_GUARD_AURA:     "Защитная аура",
+    S_MAG_BARRIER:    "Магический барьер",
+    S_REFLECT:        "Отражение магии",
+    S_CC_IMMUNE:      "Иммунитет к контролю",
+    S_STALWART:       "Стойкость",
+    S_INVINCIBLE:     "Непоколебимость",
+    S_SPIRIT_REGEN:   "Восстановление духа",
+    S_BERSERK:        "Берсерк",
+    S_DARK_AURA:      "Зловещая аура",
+    S_PROVOKE:        "Провокация",
+    S_EDICT:          "Эдикт",
+    S_OMEN:           "Предзнаменование",
+}
+
+
+def status_name_ru(status_id: str) -> str:
+    return STATUS_NAMES_RU.get(status_id, status_id)
+
+
+def apply_status_logged(owner, effect: StatusEffect, log: list,
+                        resistance_override=None) -> bool:
+    """
+    Обёртка над apply_status с записью в лог боя.
+    Используется когда контекст доступен на месте вызова.
+    Stackable-статусы (кровотечение, яд) пишут количество стаков.
+    """
+    stackable = {S_BLEED, S_BLEED_HEAVY, S_POISON, S_POISON_HEAVY}
+    existing_stacks = 0
+    if effect.status_id in stackable:
+        ex = get_status(owner, effect.status_id)
+        if ex:
+            existing_stacks = ex.stacks
+
+    applied = apply_status(owner, effect, resistance_override)
+
+    if applied:
+        name = status_name_ru(effect.status_id)
+        if effect.status_id in stackable and existing_stacks > 0:
+            new_stacks = existing_stacks + 1
+            log.append(f"{owner.name}: {name} x{new_stacks} [[+{effect.duration}]]")
+        else:
+            log.append(f"{owner.name}: {name} [[+{effect.duration}]]")
+    return applied
+
+
+def remove_status_logged(owner, status_id: str, log: list) -> bool:
+    """Снимает статус и пишет в лог."""
+    removed = remove_status(owner, status_id)
+    if removed:
+        name = status_name_ru(status_id)
+        log.append(f"{owner.name}: {name} снят")
+    return removed

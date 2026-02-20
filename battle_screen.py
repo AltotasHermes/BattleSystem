@@ -33,6 +33,7 @@ define COL_LOCKED   = "#2a1a1a"
 define COL_ON       = "#44aa44"
 define COL_OFF      = "#aa3333"
 define COL_CD       = "#886633"
+define COL_STATUS   = "#cc9944"
 
 
 screen battle_screen(ctx):
@@ -139,6 +140,17 @@ screen battle_screen(ctx):
                         xalign 0.5
                         color COL_TEXT
 
+                    ## Статусы врага
+                    if e["statuses"]:
+                        vbox:
+                            spacing 3
+                            xalign 0.5
+                            for st_name, st_dur in e["statuses"]:
+                                text (st_name + " (" + str(st_dur) + ")"):
+                                    size 11
+                                    xalign 0.5
+                                    color COL_STATUS
+
     ## -----------------------------------------------------------------------
     ## ГЛАВНОЕ МЕНЮ — x:0..200, y:740..1080
     ## -----------------------------------------------------------------------
@@ -240,7 +252,7 @@ screen battle_screen(ctx):
                     vbox:
                         xpos 16
                         ypos 14
-                        spacing 10
+                        spacing 8
 
                         text p["name"] size 18 color p_col
 
@@ -267,6 +279,16 @@ screen battle_screen(ctx):
                                 left_bar Solid(COL_RES)
                                 right_bar Solid("#2a2a2a")
                             text (str(p["resource"]) + " / " + str(p["res_max"])) size 12 color COL_TEXT
+
+                        ## Статусы персонажа партии
+                        if p["statuses"]:
+                            hbox:
+                                spacing 8
+                                xsize 265
+                                for st_name, st_dur in p["statuses"]:
+                                    text (st_name + " (" + str(st_dur) + ")"):
+                                        size 11
+                                        color COL_STATUS
 
     ## -----------------------------------------------------------------------
     ## ПРАВАЯ ПАНЕЛЬ — ЛОГ — x:1560..1920

@@ -85,9 +85,6 @@ class BattleContext:
         if hasattr(actor, "skillset"):
             actor.skillset.tick_cooldowns()
 
-        # Генерация Энергии для физических бойцов — базовая атака добавляется
-        # отдельно в execute_action; здесь только пассивная регенерация (если есть)
-
         return actor
 
     def commit_action(self, weight):
@@ -159,6 +156,14 @@ class BattleContext:
     # Данные для UI
     # ------------------------------------------------------------------
 
+    def ui_combatant_statuses(self, combatant):
+        """Список (name, duration) активных статусов для отображения в UI."""
+        from combat.status import get_statuses, status_name_ru
+        result = []
+        for s in get_statuses(combatant):
+            result.append((status_name_ru(s.status_id), s.duration))
+        return result
+
     def ui_party_data(self):
         return [
             {
@@ -170,6 +175,7 @@ class BattleContext:
                 "res_type": c.resource_type,
                 "alive":    c.is_alive(),
                 "active":   c is self.current_actor,
+                "statuses": self.ui_combatant_statuses(c),
             }
             for c in self.party
         ]
@@ -177,11 +183,12 @@ class BattleContext:
     def ui_enemy_data(self):
         return [
             {
-                "name":   c.name,
-                "hp":     c.hp_current,
-                "hp_max": c.hp_max,
-                "alive":  c.is_alive(),
-                "active": c is self.current_actor,
+                "name":     c.name,
+                "hp":       c.hp_current,
+                "hp_max":   c.hp_max,
+                "alive":    c.is_alive(),
+                "active":   c is self.current_actor,
+                "statuses": self.ui_combatant_statuses(c),
             }
             for c in self.enemies
         ]
