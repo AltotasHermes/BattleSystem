@@ -51,8 +51,9 @@ def _frost_strike(user, targets, ctx):
             if allowed and random.random() < chance_ref[0]:
                 apply_status(t, make_chill(duration=3, power=3.0))
 
+            # ВАЖНО: [[Мороз]] — экранирование для Ren'Py text-виджета
             label = "КРИТ" if res.crit else "удар"
-            ctx.log.append(f"{user.name} -> {t.name}: {label} {res.damage} урона [Мороз]")
+            ctx.log.append(f"{user.name} -> {t.name}: {label} {res.damage} урона [[Мороз]]")
 
 
 # ---------------------------------------------------------------------------
@@ -82,8 +83,9 @@ def _fire_strike(user, targets, ctx):
             if allowed and random.random() < chance_ref[0]:
                 apply_status(t, make_burn(duration=3, power=5.0))
 
+            # ВАЖНО: [[Огонь]] — экранирование для Ren'Py text-виджета
             label = "КРИТ" if res.crit else "удар"
-            ctx.log.append(f"{user.name} -> {t.name}: {label} {res.damage} урона [Огонь]")
+            ctx.log.append(f"{user.name} -> {t.name}: {label} {res.damage} урона [[Огонь]]")
 
 
 # ---------------------------------------------------------------------------
@@ -116,8 +118,9 @@ def _thunder_strike(user, targets, ctx):
                 duration = get_paralyze_duration(t, BASE_PARALYZE_DURATION)
                 apply_status(t, make_paralyze(duration=duration))
 
+            # ВАЖНО: [[Гроза]] — экранирование для Ren'Py text-виджета
             label = "КРИТ" if res.crit else "удар"
-            ctx.log.append(f"{user.name} -> {t.name}: {label} {res.damage} урона [Гроза]")
+            ctx.log.append(f"{user.name} -> {t.name}: {label} {res.damage} урона [[Гроза]]")
 
 
 # ---------------------------------------------------------------------------

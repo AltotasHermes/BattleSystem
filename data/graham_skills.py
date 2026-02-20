@@ -105,7 +105,8 @@ def _cleave_2(user, targets, ctx):
         atk = AttackData(DMG_SLASH, scaling_stat=user.mettle,
                          weapon_mult=1.7 * bonus_mult, stagger_fill=0.35)
         res = resolve_damage(user, t, atk)
-        suffix = " [кровь]" if has_bleed else ""
+        # ВАЖНО: [[кровь]] — экранирование для Ren'Py text-виджета
+        suffix = " [[кровь]]" if has_bleed else ""
         _apply_result(user, t, res, ctx, label_override=("КРИТ" if res.crit else "удар") + suffix)
 
 def _cleave_3(user, targets, ctx):
@@ -144,7 +145,8 @@ def _rush_2(user, targets, ctx):
             amt = 12.0 if bonus else 7.0
             push_back(t, amt)
             if ctx:
-                note = " [следующий в очереди]" if bonus else ""
+                # ВАЖНО: [[следующий в очереди]] — экранирование для Ren'Py text-виджета
+                note = " [[следующий в очереди]]" if bonus else ""
                 ctx.log.append(f"{t.name}: Откат {amt:.0f}{note}.")
 
 def _rush_3(user, targets, ctx):
