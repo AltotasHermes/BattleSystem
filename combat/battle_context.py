@@ -106,6 +106,7 @@ class BattleContext:
     def execute_basic_attack(self, actor, target):
         from combat.damage import resolve_damage, AttackData, DMG_SLASH
         from combat.stagger import add_stagger
+        from combat.elemental_reactions import check_elemental_reaction
 
         atk = AttackData(
             damage_type=DMG_SLASH,
@@ -115,9 +116,12 @@ class BattleContext:
         )
         res = resolve_damage(actor, target, atk)
         if res.hit and not res.evaded:
+            # Стихийные реакции до применения урона к HP
+            check_elemental_reaction(actor, target, DMG_SLASH, self.log)
+
             target.take_damage(res.damage)
             add_stagger(target, res.stagger_fill * target.stagger_max)
-            # Базовая атака генерирует Энергию
+
             from combat.combatant import RESOURCE_ENERGY
             if actor.resource_type == RESOURCE_ENERGY:
                 actor.restore_resource(15)

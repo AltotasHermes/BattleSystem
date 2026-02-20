@@ -34,11 +34,11 @@ ELEMENTAL_TYPES = {DMG_FIRE, DMG_FROST, DMG_THUNDER, DMG_WITHER}
 @dataclass
 class AttackData:
     """Описание одной атаки. Задаётся на уровне скилла или базовой атаки."""
-    damage_type:   str            # одна из констант DMG_*
-    scaling_stat:  float          # значение стата урона (mettle/sense/finesse/glamour)
-    weapon_mult:   float = 1.0    # множитель оружия
-    stagger_fill:  float = 0.15   # вклад в stagger-шкалу (0.0 – 1.0)
-    is_magical:    bool  = False   # определяет какую защиту использовать
+    damage_type:   str
+    scaling_stat:  float
+    weapon_mult:   float = 1.0
+    stagger_fill:  float = 0.15
+    is_magical:    bool  = False
     can_crit:      bool  = True
 
 
@@ -62,13 +62,11 @@ def _defense_pct(stat, armor, k=DEFENSE_K):
 
 
 def _raw_damage(scaling_stat, weapon_mult):
-    # Применяем weakness_mult если он есть на атакующем
     spread = random.uniform(0.85, 1.15)
     return (scaling_stat ** 1.4) * weapon_mult * spread
 
 
 def _effective_scaling_stat(attacker, base_stat):
-    """Учитывает Слабость атакующего — снижает атакующий стат."""
     mult = getattr(attacker, "_weakness_mult", 1.0)
     return base_stat * mult
 
@@ -89,7 +87,6 @@ def _resistance_mult(target, damage_type):
             return 0.0
         base = val
 
-    # Погодные и статусные бонусы к стихийным коэффициентам
     bonus = 0.0
     if damage_type == DMG_FROST:
         bonus += getattr(target, "_chill_frost_bonus", 0.0)
@@ -110,11 +107,12 @@ def resolve_damage(attacker, target, atk: AttackData) -> DamageResult:
     res = DamageResult()
 
     # 1. Проверка уклонения
-    # Оглушение, Паралич, Ужас снимают уклонение цели
+    # Оглушение, Паралич, Ужас, Прорыв стойки снимают уклонение цели
     target_evade = target.evade_pct
-    if getattr(target, "_stunned", False) or \
-       getattr(target, "_paralyzed", False) or \
-       getattr(target, "_terrified", False):
+    if (getattr(target, "_stunned", False) or
+            getattr(target, "_paralyzed", False) or
+            getattr(target, "_terrified", False) or
+            getattr(target, "_in_stagger_break", False)):
         target_evade = 0.0
 
     evade_chance = max(0.0, target_evade - attacker.accuracy_pct)
@@ -128,7 +126,6 @@ def resolve_damage(attacker, target, atk: AttackData) -> DamageResult:
     # 2. Сопротивление цели
     resist = _resistance_mult(target, atk.damage_type)
 
-    # Абсорб — урон превращается в лечение
     if resist == "absorb":
         stat = _effective_scaling_stat(attacker, atk.scaling_stat)
         raw = _raw_damage(stat, atk.weapon_mult)
@@ -140,7 +137,7 @@ def resolve_damage(attacker, target, atk: AttackData) -> DamageResult:
         res.log.append("IMMUNE")
         return res
 
-    # 3. Базовый урон с учётом Слабости атакующего
+    # 3. Базовый урон
     stat = _effective_scaling_stat(attacker, atk.scaling_stat)
     raw = _raw_damage(stat, atk.weapon_mult)
 
@@ -157,14 +154,21 @@ def resolve_damage(attacker, target, atk: AttackData) -> DamageResult:
 
     # 6. Итоговый урон
     final = raw * resist * (1.0 - def_pct)
+
+    # 7. Множитель Прорыва стойки — входящий урон повышен
+    if getattr(target, "_in_stagger_break", False):
+        from combat.stagger import STAGGER_BREAK_DMG_MULT
+        final *= STAGGER_BREAK_DMG_MULT
+
     res.damage = max(1, int(round(final)))
 
-    # 7. Stagger
+    # 8. Stagger
     res.stagger_fill = atk.stagger_fill * (resist if isinstance(resist, float) else 1.0)
 
     res.log.append(
         f"raw={raw:.1f} resist=x{resist} "
         f"def={def_pct*100:.1f}% "
+        f"{'STAGGER_BREAK ' if getattr(target, '_in_stagger_break', False) else ''}"
         f"{'CRIT ' if res.crit else ''}"
         f"-> {res.damage} dmg  stagger+{res.stagger_fill:.2f}"
     )
@@ -174,9 +178,5 @@ def resolve_damage(attacker, target, atk: AttackData) -> DamageResult:
 # --- Лечение с учётом Горения ---
 
 def resolve_heal(target, amount: int) -> int:
-    """
-    Применяет модификатор лечения от Горения и возвращает итоговое значение.
-    Вызывающий код должен сам применить heal().
-    """
     mult = getattr(target, "_burn_heal_mod", 1.0)
     return max(0, int(round(amount * mult)))
