@@ -4,6 +4,12 @@
 Каждый статус — объект StatusEffect с типом, длительностью и хуками.
 Носитель хранит список активных статусов в combatant.statuses.
 Тик вызывается вручную в начале хода носителя.
+
+КОНТРАКТ С CTB:
+    commit_action() в BattleContext ОБЯЗАН быть вызван ровно один раз
+    после каждого завершённого хода персонажа. Именно там тикают кулдауны
+    и применяется задержка CTB. Пропуск вызова заморозит кулдауны и
+    нарушит порядок очереди.
 """
 
 from dataclasses import dataclass, field
@@ -50,7 +56,7 @@ S_CHILL         = "chill"
 S_FROSTBITE     = "frostbite"
 S_WET           = "wet"
 S_SCORCH        = "scorch"
-S_WITHER        = "wither"   # Стихия Увядания
+S_WITHER        = "wither"
 
 # Позитивные
 S_REGEN         = "regen"
@@ -90,6 +96,26 @@ NEGATIVE_STATUSES = {
 }
 
 SKILL_BLOCK_STATUSES = {S_SLOW, S_SILENCE}
+
+
+# ---------------------------------------------------------------------------
+# Множитель урона яда от Увядания
+# Перенесено из elemental_reactions чтобы устранить циклический импорт.
+# elemental_reactions устанавливает флаг _wither_poison_active на цели,
+# а tick яда читает его здесь через get_poison_damage_mult().
+# ---------------------------------------------------------------------------
+
+POISON_WITHER_DMG_MULT = 2.0
+
+
+def get_poison_damage_mult(target) -> float:
+    """
+    Возвращает множитель урона яда с учётом Увядания.
+    Вызывается внутри _poison_tick — не импортирует elemental_reactions.
+    """
+    if getattr(target, "_wither_poison_active", False):
+        return POISON_WITHER_DMG_MULT
+    return 1.0
 
 
 # ---------------------------------------------------------------------------
@@ -158,7 +184,6 @@ def apply_status(owner, effect: StatusEffect, resistance_override=None):
         if effect.status_id in element_map:
             elem = element_map[effect.status_id]
             if owner.resistances.get(elem, 1.0) == 0.0:
-                # Иммунитет к яду может быть временно подавлен Увяданием
                 if effect.status_id in (S_POISON, S_POISON_HEAVY):
                     if not getattr(owner, "_wither_suppressed_poison_immunity", False):
                         return False
@@ -242,7 +267,7 @@ def make_bleed_heavy(duration=3, power=14.0):
 
 
 def _poison_tick(owner, effect):
-    from combat.elemental_reactions import get_poison_damage_mult
+    # get_poison_damage_mult определена в этом же модуле — циклического импорта нет
     base = effect.power
     mult = get_poison_damage_mult(owner)
     dmg = max(1, int(base * effect.stacks * mult))
@@ -254,7 +279,6 @@ def make_poison(duration=4, power=6.0):
 
 def make_poison_heavy(duration=4, power=12.0, source=None):
     def tick(owner, effect):
-        from combat.elemental_reactions import get_poison_damage_mult
         base = effect.power
         if effect.source is not None:
             base = max(base, effect.source.sense * 0.6)
@@ -266,11 +290,17 @@ def make_poison_heavy(duration=4, power=12.0, source=None):
                         source=source, on_tick=tick)
 
 
+# ---------------------------------------------------------------------------
 # Горение
+# on_apply снимает Озноб через remove_status — единственная точка этой логики.
+# elemental_reactions.py НЕ дублирует снятие Озноба при наложении Горения.
+# ---------------------------------------------------------------------------
+
 _BURN_HEAL_REDUCTION = 0.4
 
 def _burn_apply(owner, effect):
     owner._burn_heal_mod = getattr(owner, "_burn_heal_mod", 1.0) * (1.0 - _BURN_HEAL_REDUCTION)
+    # Горение автоматически снимает Озноб при наложении
     if has_status(owner, S_CHILL):
         remove_status(owner, S_CHILL)
 
@@ -287,9 +317,41 @@ def make_burn(duration=3, power=5.0):
                         on_apply=_burn_apply, on_remove=_burn_remove, on_tick=_burn_tick)
 
 
+# ---------------------------------------------------------------------------
+# Озноб
+# on_apply снимает Горение через remove_status — единственная точка этой логики.
+# elemental_reactions.py НЕ дублирует снятие Горения при наложении Озноба.
+# ---------------------------------------------------------------------------
+
+_CHILL_FROST_VULN = 0.25
+
+def _chill_apply(owner, effect):
+    from combat.ctb import push_back
+    push_back(owner, 4.0)
+    owner._chill_frost_bonus = _CHILL_FROST_VULN
+    # Озноб автоматически снимает Горение при наложении
+    if has_status(owner, S_BURN):
+        remove_status(owner, S_BURN)
+
+def _chill_remove(owner, effect):
+    owner._chill_frost_bonus = 0.0
+
+def _chill_tick(owner, effect):
+    dmg = max(1, int(effect.power))
+    owner.take_damage(dmg)
+
+def make_chill(duration=3, power=3.0):
+    return StatusEffect(S_CHILL, duration=duration, power=power,
+                        on_apply=_chill_apply, on_remove=_chill_remove,
+                        on_tick=_chill_tick)
+
+
+# ---------------------------------------------------------------------------
 # Увядание
-_WITHER_HEAL_REDUCTION = 0.7   # эффективность лечения снижена на 70%
-_WITHER_STAT_DECAY     = 0.05  # снижение атакующих параметров за тик
+# ---------------------------------------------------------------------------
+
+_WITHER_HEAL_REDUCTION = 0.7
+_WITHER_STAT_DECAY     = 0.05
 
 def _wither_apply(owner, effect):
     owner._wither_heal_mod_saved = getattr(owner, "_burn_heal_mod", 1.0)
@@ -304,7 +366,6 @@ def _wither_remove(owner, effect):
 def _wither_tick(owner, effect):
     dmg = max(1, int(effect.power))
     owner.take_damage(dmg)
-    # Постепенное снижение атакующих параметров
     owner._weakness_mult = max(0.4, getattr(owner, "_weakness_mult", 1.0) - _WITHER_STAT_DECAY)
     effect._tick_log = f"WITHER -{dmg} HP, weakness_mult={owner._weakness_mult:.2f}"
 
@@ -554,37 +615,13 @@ def make_curse(duration=3):
 # Фабрики — стихийные состояния
 # ---------------------------------------------------------------------------
 
-_CHILL_FROST_VULN = 0.25
-
-def _chill_apply(owner, effect):
-    from combat.ctb import push_back
-    push_back(owner, 4.0)
-    owner._chill_frost_bonus = _CHILL_FROST_VULN
-    if has_status(owner, S_BURN):
-        remove_status(owner, S_BURN)
-
-def _chill_remove(owner, effect):
-    owner._chill_frost_bonus = 0.0
-
-def _chill_tick(owner, effect):
-    dmg = max(1, int(effect.power))
-    owner.take_damage(dmg)
-
-def make_chill(duration=3, power=3.0):
-    return StatusEffect(S_CHILL, duration=duration, power=power,
-                        on_apply=_chill_apply, on_remove=_chill_remove,
-                        on_tick=_chill_tick)
-
-
-def _wet_apply(owner, effect):
-    owner._wet_active = True
-
-def _wet_remove(owner, effect):
-    owner._wet_active = False
-
 def make_wet(duration=4):
+    def apply(owner, effect):
+        owner._wet_active = True
+    def remove(owner, effect):
+        owner._wet_active = False
     return StatusEffect(S_WET, duration=duration,
-                        on_apply=_wet_apply, on_remove=_wet_remove)
+                        on_apply=apply, on_remove=remove)
 
 
 def _frostbite_apply(owner, effect):
@@ -668,7 +705,6 @@ def apply_status_logged(owner, effect: StatusEffect, log: list,
                         resistance_override=None) -> bool:
     """
     Обёртка над apply_status с записью в лог боя.
-    Используется когда контекст доступен на месте вызова.
     Stackable-статусы (кровотечение, яд) пишут количество стаков.
     """
     stackable = {S_BLEED, S_BLEED_HEAVY, S_POISON, S_POISON_HEAVY}

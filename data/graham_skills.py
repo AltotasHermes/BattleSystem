@@ -8,6 +8,24 @@
 
 chain_id совпадает для всех ступеней одной цепочки — вся цепочка
 уходит на общий кулдаун при использовании любой из ступеней.
+
+ФЛАГИ РЕАКТИВНЫХ МЕХАНИК (ветвь Парирования):
+    Скиллы этой ветви выставляют флаги прямо на Combatant. Флаги читаются
+    в BattleContext.execute_basic_attack() при обработке входящих атак по Грэму.
+
+    _parry_active       (bool)  — активно Парирование; при успехе урон снижен вдвое
+    _parry_chance       (float) — шанс срабатывания парирования (0.0..1.0)
+    _parry_energy       (int)   — Энергия при успешном парировании
+    _parry_auto_counter (bool)  — Парирование III: успех автоматически запускает контратаку
+    _counter_active     (bool)  — активен Встречный удар; срабатывает после любого попадания
+    _counter_mult       (float) — множитель урона контратаки
+    _counter_stun       (bool)  — контратака может оглушить
+    _counter_stun_chance (float) — шанс оглушения от контратаки
+    _counter_heavy_pushback (bool) — контратака после тяжёлой атаки врага даёт Откат
+    _iron_stance_active (bool)  — активна Железная стойка; снижает входящий урон
+    _iron_dr            (float) — коэффициент снижения урона (0.20 / 0.30)
+    _iron_energy_bonus  (int)   — дополнительная Энергия за удар по Грэму
+    _iron_cc_immune     (bool)  — Железная стойка III: иммунитет к Откату
 """
 
 import random
@@ -96,7 +114,8 @@ def _cleave_1(user, targets, ctx):
         atk = AttackData(DMG_SLASH, scaling_stat=user.mettle,
                          weapon_mult=1.5, stagger_fill=0.30)
         res = resolve_damage(user, t, atk)
-        _apply_result(user, t, res, ctx, label_override="Рубящий удар" if not res.crit else "КРИТ Рубящий удар")
+        _apply_result(user, t, res, ctx,
+                      label_override="Рубящий удар" if not res.crit else "КРИТ Рубящий удар")
 
 def _cleave_2(user, targets, ctx):
     for t in targets:
@@ -107,14 +126,16 @@ def _cleave_2(user, targets, ctx):
         res = resolve_damage(user, t, atk)
         # ВАЖНО: [[кровь]] — экранирование для Ren'Py text-виджета
         suffix = " [[кровь]]" if has_bleed else ""
-        _apply_result(user, t, res, ctx, label_override=("КРИТ" if res.crit else "удар") + suffix)
+        _apply_result(user, t, res, ctx,
+                      label_override=("КРИТ" if res.crit else "удар") + suffix)
 
 def _cleave_3(user, targets, ctx):
     for t in targets:
         atk = AttackData(DMG_SLASH, scaling_stat=user.mettle,
                          weapon_mult=2.0, stagger_fill=0.40)
         res = resolve_damage(user, t, atk)
-        _apply_result(user, t, res, ctx, label_override="Рубящий удар" if not res.crit else "КРИТ Рубящий удар")
+        _apply_result(user, t, res, ctx,
+                      label_override="Рубящий удар" if not res.crit else "КРИТ Рубящий удар")
         if res.hit and not res.evaded and has_status(t, S_STAGGER_BREAK):
             push_back(t, 15.0)
             if ctx:
@@ -301,6 +322,10 @@ def _body_blow_3(user, targets, ctx):
 
 # ===========================================================================
 # ВЕТВЬ: ПАРИРОВАНИЕ
+#
+# Скиллы этой ветви выставляют флаги на Combatant.
+# Флаги обрабатываются в BattleContext.execute_basic_attack().
+# Список флагов и их семантику см. в docstring модуля (начало файла).
 # ===========================================================================
 
 S_PARRY_READY   = "parry_ready"
@@ -336,11 +361,13 @@ def _make_iron_stance(duration, cc_immune=False):
     def on_apply(owner, effect):
         owner._iron_stance_active = True
         owner._iron_dr            = _IRON_STANCE_DR
+        owner._iron_energy_bonus  = 0
         if cc_immune:
             owner._iron_cc_immune = True
     def on_remove(owner, effect):
         owner._iron_stance_active = False
         owner._iron_dr            = 0.0
+        owner._iron_energy_bonus  = 0
         owner._iron_cc_immune     = False
     return StatusEffect(S_IRON_STANCE, duration=duration,
                         on_apply=on_apply, on_remove=on_remove)
@@ -359,6 +386,8 @@ def _parry_2(user, targets, ctx):
         ctx.log.append(f"{user.name}: усиленная стойка парирования (60%).")
 
 def _parry_3(user, targets, ctx):
+    # Парирование III: при успехе автоматически выполняется контратака.
+    # Флаг _parry_auto_counter читается в BattleContext._execute_counter().
     effect = _make_parry_ready(duration=2, chance=0.60,
                                 energy_gain=_PARRY_ENERGY_GAIN + 10)
     orig_apply  = effect.on_apply
@@ -377,21 +406,29 @@ def _parry_3(user, targets, ctx):
 
 
 def _riposte_1(user, targets, ctx):
+    # Встречный удар I: контратака с пониженным уроном, без оглушения.
+    # Флаги _counter_mult и _counter_stun читаются в execute_basic_attack().
     apply_status(user, _make_counter_ready(duration=2))
-    user._counter_mult = 0.7
-    user._counter_stun = False
+    user._counter_mult           = 0.7
+    user._counter_stun           = False
+    user._counter_stun_chance    = 0.0
+    user._counter_heavy_pushback = False
     if ctx:
         ctx.log.append(f"{user.name}: готовность к встречному удару.")
 
 def _riposte_2(user, targets, ctx):
+    # Встречный удар II: полный урон, шанс Оглушения.
     apply_status(user, _make_counter_ready(duration=2))
-    user._counter_mult        = 1.0
-    user._counter_stun        = True
-    user._counter_stun_chance = 0.40
+    user._counter_mult           = 1.0
+    user._counter_stun           = True
+    user._counter_stun_chance    = 0.40
+    user._counter_heavy_pushback = False
     if ctx:
         ctx.log.append(f"{user.name}: встречный удар (усил., шанс Оглушения 40%).")
 
 def _riposte_3(user, targets, ctx):
+    # Встречный удар III: бафф 3 хода, Откат после тяжёлой атаки врага.
+    # _counter_heavy_pushback читается в _execute_counter().
     apply_status(user, _make_counter_ready(duration=3))
     user._counter_mult           = 1.0
     user._counter_stun           = True
@@ -407,6 +444,8 @@ def _iron_stance_1(user, targets, ctx):
         ctx.log.append(f"{user.name}: Железная стойка — снижение урона 20%.")
 
 def _iron_stance_2(user, targets, ctx):
+    # Железная стойка II: снижение урона 30%, больше Энергии за удар.
+    # _iron_energy_bonus читается в execute_basic_attack().
     effect = _make_iron_stance(duration=2)
     orig_apply = effect.on_apply
     def on_apply_2(owner, eff):
@@ -419,6 +458,9 @@ def _iron_stance_2(user, targets, ctx):
         ctx.log.append(f"{user.name}: Железная стойка (усил.) — снижение урона 30%.")
 
 def _iron_stance_3(user, targets, ctx):
+    # Железная стойка III: иммунитет к Откату (_iron_cc_immune).
+    # Проверка флага на стороне BattleContext — при получении push_back
+    # нужно добавить проверку _iron_cc_immune в ctb.push_back или в месте вызова.
     apply_status(user, _make_iron_stance(duration=3, cc_immune=True))
     if ctx:
         ctx.log.append(f"{user.name}: несокрушимая Железная стойка — иммунитет к Откату.")
@@ -433,7 +475,6 @@ def build_graham_skills() -> SkillSet:
 
     # -----------------------------------------------------------------------
     # Режущее оружие
-    # Одна цепочка = один chain_id. Все ступени делят кулдаун.
     # -----------------------------------------------------------------------
 
     ss.register(Skill(

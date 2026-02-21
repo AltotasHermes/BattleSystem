@@ -16,16 +16,10 @@ from combat.ctb import push_back
 # Константы
 # ---------------------------------------------------------------------------
 
-STAGGER_DECAY          = 0.08   # убывание за ход носителя (доля от stagger_max)
-STAGGER_BREAK_PUSHBACK = 12.0   # откат в CTB при Прорыве стойки
-
-# Множитель входящего урона в состоянии Прорыва стойки
+STAGGER_DECAY          = 0.08
+STAGGER_BREAK_PUSHBACK = 12.0
 STAGGER_BREAK_DMG_MULT = 1.35
-
-# Множитель заполнения шкалы при активном Разрушении защиты
 DEFENSE_BREAK_MULT     = 2.0
-
-# Множитель убывания при активной Стойкости
 STALWART_DECAY_MULT    = 1.5
 
 
@@ -34,7 +28,6 @@ STALWART_DECAY_MULT    = 1.5
 # ---------------------------------------------------------------------------
 
 def init_stagger(combatant, stagger_max):
-    """Вызывается при создании участника боя."""
     combatant.stagger_max     = float(stagger_max)
     combatant.stagger_current = 0.0
     combatant._in_stagger_break = False
@@ -45,10 +38,6 @@ def init_stagger(combatant, stagger_max):
 # ---------------------------------------------------------------------------
 
 def add_stagger(combatant, amount):
-    """
-    Добавляет amount к шкале. Учитывает S_DEFENSE_BREAK и S_STALWART.
-    Возвращает True если произошёл Прорыв стойки.
-    """
     if combatant._in_stagger_break:
         return False
 
@@ -80,12 +69,10 @@ def _stagger_break_remove(owner, effect):
     owner.stagger_current   = 0.0
 
 def _trigger_stagger_break(combatant):
-    # S_CC_IMMUNE и S_STALWART блокируют прорыв
     if has_status(combatant, S_CC_IMMUNE):
         return False
     if has_status(combatant, S_STALWART):
         return False
-    # Бродячий гнев даёт иммунитет к прорыву стойки на время действия
     if has_status(combatant, S_BERSERK):
         return False
 
@@ -106,10 +93,6 @@ def _trigger_stagger_break(combatant):
 # ---------------------------------------------------------------------------
 
 def decay_stagger(combatant):
-    """
-    Вызывается в начале хода носителя, до тика статусов.
-    Шкала не убывает во время Прорыва стойки.
-    """
     if combatant._in_stagger_break:
         return
 

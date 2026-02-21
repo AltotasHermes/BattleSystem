@@ -5,6 +5,32 @@ Skill — контейнер с метаданными и callback-функци�
 Кулдаун измеряется в ходах самого персонажа.
 Кулдаун ступени = номер ступени (I=1, II=2, III=3).
 Все ступени одной цепочки делят один кулдаун через общий chain_id.
+
+ПАССИВНЫЕ СКИЛЛЫ:
+    Пассив регистрируется с is_passive=True и набором хуков вместо execute.
+    Хуки вызываются из BattleContext в определённые моменты боя.
+    Все хуки опциональны — пассив реализует только те что ему нужны.
+
+    Доступные хуки:
+        on_battle_start(owner, ctx)
+            Вызывается один раз при инициализации боя для каждого
+            участника с разблокированным пассивом.
+
+        on_hit_received(owner, attacker, result, ctx)
+            Вызывается когда owner получает удар (hit=True, evaded=False).
+            result — DamageResult после применения урона.
+
+        on_status_applied(owner, effect, ctx)
+            Вызывается после успешного наложения статуса на owner.
+            effect — StatusEffect который был наложен.
+
+        on_ally_damaged(owner, ally, attacker, result, ctx)
+            Вызывается когда союзник (не сам owner) получает урон.
+            Используется для реакций поддержки типа Ледяной реакции.
+
+        on_debuff_applied_by(owner, target, effect, ctx)
+            Вызывается когда owner сам успешно накладывает дебафф на цель.
+            Используется для пассивов типа Регентской воли и Холодного расчёта.
 """
 
 from dataclasses import dataclass, field
@@ -29,21 +55,6 @@ TARGET_AREA_FOE = "area_foe"
 
 @dataclass
 class Skill:
-    """
-    skill_id        — уникальный строковый идентификатор
-    name            — отображаемое имя
-    tier            — ступень цепочки (1/2/3); пассивы = 0
-    chain_id        — идентификатор цепочки; все ступени одной цепочки
-                      должны иметь одинаковый chain_id
-    branch_name     — название ветви для UI
-    resource_cost   — стоимость в ресурсе персонажа
-    action_weight   — вес для CTB
-    target_type     — тип цели
-    execute         — callable(user, targets, ctx)
-    is_passive      — пассивный скилл
-    description     — текст для UI
-    unlocked        — разблокирован ли скилл (ветвь открыта)
-    """
     skill_id:       str
     name:           str
     tier:           int
@@ -57,9 +68,15 @@ class Skill:
     description:    str   = ""
     unlocked:       bool  = True
 
+    # Хуки пассивных скиллов — заполняются только для is_passive=True
+    on_battle_start:      Optional[Callable] = None  # (owner, ctx)
+    on_hit_received:      Optional[Callable] = None  # (owner, attacker, result, ctx)
+    on_status_applied:    Optional[Callable] = None  # (owner, effect, ctx)
+    on_ally_damaged:      Optional[Callable] = None  # (owner, ally, attacker, result, ctx)
+    on_debuff_applied_by: Optional[Callable] = None  # (owner, target, effect, ctx)
+
     @property
     def cooldown_length(self):
-        """Длина кулдауна в ходах равна номеру ступени."""
         return self.tier if self.tier > 0 else 0
 
 
@@ -79,7 +96,6 @@ class CooldownTracker:
 
     def put_on_cooldown(self, skill: Skill):
         if skill.cooldown_length > 0:
-            # +1 компенсирует немедленный тик в commit_action того же хода
             self._cd[skill.chain_id] = skill.cooldown_length + 1
 
     def tick(self):
@@ -101,12 +117,7 @@ class SkillSet:
     def __init__(self):
         self._skills: dict[str, Skill] = {}
         self.cooldowns = CooldownTracker()
-        # Множество разблокированных ветвей. Если пусто — все ветви доступны.
         self._unlocked_branches: set = set()
-
-    # ------------------------------------------------------------------
-    # Управление ветвями
-    # ------------------------------------------------------------------
 
     def unlock_branch(self, branch_name: str):
         self._unlocked_branches.add(branch_name)
@@ -116,22 +127,14 @@ class SkillSet:
 
     def is_branch_unlocked(self, branch_name: str) -> bool:
         if not self._unlocked_branches:
-            return True   # если ограничений нет — все доступны
+            return True
         return branch_name in self._unlocked_branches
-
-    # ------------------------------------------------------------------
-    # Регистрация
-    # ------------------------------------------------------------------
 
     def register(self, skill: Skill):
         self._skills[skill.skill_id] = skill
 
     def get(self, skill_id: str) -> Optional[Skill]:
         return self._skills.get(skill_id)
-
-    # ------------------------------------------------------------------
-    # Списки скиллов
-    # ------------------------------------------------------------------
 
     def all_active(self):
         return [s for s in self._skills.values() if not s.is_passive]
@@ -150,10 +153,6 @@ class SkillSet:
         ]
 
     def branches(self):
-        """
-        Возвращает список (branch_id, branch_name) всех известных ветвей.
-        Используется UI для отображения — включает заблокированные ветви.
-        """
         seen = {}
         for s in self._skills.values():
             if not s.is_passive and s.branch_name not in seen:
@@ -173,12 +172,7 @@ class SkillSet:
         ]
 
     def all_in_branch(self, branch_name):
-        """Все скиллы ветви включая недоступные по кулдауну."""
         return [s for s in self.all_active() if s.branch_name == branch_name]
-
-    # ------------------------------------------------------------------
-    # Использование
-    # ------------------------------------------------------------------
 
     def use(self, skill_id: str, user, targets, ctx=None) -> bool:
         from combat.status import skills_blocked
@@ -209,11 +203,43 @@ class SkillSet:
         self.cooldowns.tick()
 
     # ------------------------------------------------------------------
-    # UI-данные для скиллов
+    # Диспетчеры хуков пассивных скиллов
+    # Вызываются из BattleContext в нужные моменты боя.
+    # Каждый метод итерирует только разблокированные пассивы с нужным хуком.
     # ------------------------------------------------------------------
 
+    def _active_passives(self):
+        return [
+            s for s in self.all_passive()
+            if self.is_branch_unlocked(s.branch_name)
+        ]
+
+    def fire_battle_start(self, owner, ctx):
+        for s in self._active_passives():
+            if s.on_battle_start:
+                s.on_battle_start(owner, ctx)
+
+    def fire_hit_received(self, owner, attacker, result, ctx):
+        for s in self._active_passives():
+            if s.on_hit_received:
+                s.on_hit_received(owner, attacker, result, ctx)
+
+    def fire_status_applied(self, owner, effect, ctx):
+        for s in self._active_passives():
+            if s.on_status_applied:
+                s.on_status_applied(owner, effect, ctx)
+
+    def fire_ally_damaged(self, owner, ally, attacker, result, ctx):
+        for s in self._active_passives():
+            if s.on_ally_damaged:
+                s.on_ally_damaged(owner, ally, attacker, result, ctx)
+
+    def fire_debuff_applied_by(self, owner, target, effect, ctx):
+        for s in self._active_passives():
+            if s.on_debuff_applied_by:
+                s.on_debuff_applied_by(owner, target, effect, ctx)
+
     def ui_skill_label(self, skill: Skill) -> str:
-        """Строка для кнопки навыка в боевом меню."""
         cost  = str(int(skill.resource_cost))
         cd    = max(0, self.cooldowns.remaining(skill.chain_id) - 1)
         ready = self.cooldowns.is_ready(skill)

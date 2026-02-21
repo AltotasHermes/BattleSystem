@@ -107,7 +107,6 @@ def resolve_damage(attacker, target, atk: AttackData) -> DamageResult:
     res = DamageResult()
 
     # 1. Проверка уклонения
-    # Оглушение, Паралич, Ужас, Прорыв стойки снимают уклонение цели
     target_evade = target.evade_pct
     if (getattr(target, "_stunned", False) or
             getattr(target, "_paralyzed", False) or
@@ -155,7 +154,7 @@ def resolve_damage(attacker, target, atk: AttackData) -> DamageResult:
     # 6. Итоговый урон
     final = raw * resist * (1.0 - def_pct)
 
-    # 7. Множитель Прорыва стойки — входящий урон повышен
+    # 7. Множитель Прорыва стойки
     if getattr(target, "_in_stagger_break", False):
         from combat.stagger import STAGGER_BREAK_DMG_MULT
         final *= STAGGER_BREAK_DMG_MULT

@@ -9,8 +9,9 @@ init python:
 
     from combat.battle_context import BattleContext, RESULT_WIN, RESULT_LOSE
     from combat.ctb import ActionWeight
-    from data.characters import make_graham, make_dummy_grunt, make_dummy_mage
+    from data.characters import make_graham, make_vespergrave, make_dummy_grunt, make_dummy_mage
     from data.graham_skills import build_graham_skills
+    from data.vespergrave_skills import build_vespergrave_skills
 
 define COL_BG       = "#0d0d0d"
 define COL_PANEL    = "#141414"
@@ -595,11 +596,16 @@ label test_battle:
     python:
         graham = make_graham()
         graham.skillset = build_graham_skills()
-        ## Стартовая ветвь открыта, остальные заблокированы для демонстрации
         graham.skillset.unlock_branch("Режущее оружие")
         graham.resource_current = graham.resource_max
+
+        vesp = make_vespergrave()
+        vesp.skillset = build_vespergrave_skills()
+        vesp.skillset.unlock_branch("Озноб")
+        vesp.resource_current = vesp.resource_max
+
         enemies = [make_dummy_grunt(), make_dummy_mage()]
-        ctx = BattleContext([graham], enemies)
+        ctx = BattleContext([graham, vesp], enemies)
 
     jump battle_loop
 

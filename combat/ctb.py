@@ -76,7 +76,6 @@ def queue_snapshot(combatants, slots=8):
     if not alive:
         return []
 
-    # Рабочая копия таймеров
     timers = {c: c.ctb_timer for c in alive}
     result = []
 
@@ -88,7 +87,6 @@ def queue_snapshot(combatants, slots=8):
         delta = timers[nxt]
         for c in timers:
             timers[c] -= delta
-        # Добавляем задержку лёгкой атаки как дефолт для снэпшота
         timers[nxt] += _base_delay(nxt) * ActionWeight.LIGHT
 
     return result
